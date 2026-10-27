@@ -199,7 +199,7 @@ function registerIpc(): void {
       const res = await fetch(url, {
         redirect: 'follow',
         signal: controller.signal,
-        headers: { 'User-Agent': 'SquizanTV/0.5.0' },
+        headers: { 'User-Agent': `SquizanTV/${app.getVersion()}` },
       })
       clearTimeout(timer)
       if (!res.ok || !res.body) return { ok: false, reason: `http ${res.status}` }

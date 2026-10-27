@@ -106,6 +106,40 @@ function clock(seconds: number): string {
   return hours > 0 ? `${hours}:${base}` : base
 }
 
+/** Contenedores que Chromium puede abrir tal cual. */
+const DIRECT_CONTAINERS = new Set([
+  'matroska',
+  'webm',
+  'mov',
+  'mp4',
+  'm4v',
+  'm4a',
+  'mj2',
+  '3gp',
+  '3g2',
+  'ogg',
+  'wav',
+  'flac',
+  'adts',
+  'mp3',
+  'aac',
+])
+
+const DIRECT_AUDIO = new Set(['aac', 'mp3', 'mp2', 'opus', 'flac', 'vorbis'])
+
+/** H.264 de 8 bits y 4:2:0: el único que se puede copiar a MPEG-TS sin riesgo. */
+function isCopyableVideo(codec?: string, pixFmt?: string): boolean {
+  if (codec !== 'h264') return false
+  return ['yuv420p', 'yuvj420p', 'nv12'].includes((pixFmt ?? '').toLowerCase())
+}
+
+function isDirectVideo(codec?: string, pixFmt?: string): boolean {
+  const fmt = (pixFmt ?? '').toLowerCase()
+  const eightBit = ['yuv420p', 'yuvj420p', 'nv12'].includes(fmt)
+  if (codec === 'h264' || codec === 'hevc') return eightBit
+  return ['vp8', 'vp9', 'av1'].includes(codec ?? '')
+}
+
 interface SubOption {
   id: string
   label: string
@@ -151,6 +185,8 @@ export function Player({
   const transcodeRef = useRef<{ full: boolean } | null>(null)
   const seekRestartRef = useRef<((seconds: number) => void) | null>(null)
   const mpegRef = useRef<ReturnType<typeof mpegts.createPlayer> | null>(null)
+  /** false solo cuando el usuario pausa a propósito. */
+  const playIntentRef = useRef(true)
   const isVod = channel.kind !== 'live'
   const [subError, setSubError] = useState('')
   const [customSubs, setCustomSubs] = useState<CustomSubtitle[]>([])
@@ -475,12 +511,15 @@ export function Player({
     let hls: Hls | null = null
     let mpeg: ReturnType<typeof mpegts.createPlayer> | null = null
     let fallbackUsed = false
+    let fullRetryStarted = false
 
     seekOffsetRef.current = 0
     transcodeRef.current = null
     seekRestartRef.current = null
     mpegRef.current = null
+    playIntentRef.current = true
     setCurrentTime(0)
+    setError('')
     setDuration(channel.duration && channel.duration > 0 ? channel.duration : 0)
 
     const cleanupEngines = () => {
@@ -511,9 +550,15 @@ export function Player({
       void video
         .play()
         .then(() => setStatus('playing'))
-        .catch(() => {
+        .catch((fault: DOMException) => {
           if (disposed) return
-          // Chromium bloquea el autoplay con sonido hasta que hay un gesto.
+          // Solo silenciamos si Chromium bloquea el autoplay con sonido. Si el
+          // fallo es porque el nuevo flujo aún no tiene datos (AbortError al
+          // saltar en el tiempo), esperamos a `canplay` sin quitar el sonido.
+          if (fault?.name !== 'NotAllowedError') {
+            setStatus('loading')
+            return
+          }
           video.muted = true
           setAudioBlocked(true)
           setMuted(true)
@@ -536,14 +581,23 @@ export function Player({
         startDirect(url)
         return
       }
+      const live = !isVod
       try {
         mpeg = mpegts.createPlayer(
-          { type: 'mpegts', isLive: true, url },
+          { type: 'mpegts', isLive: live, url },
           {
             enableWorker: true,
+            // En una película conviene cargar sin perseguir latencia, pero con
+            // un límite de búfer: así se descargan unos segundos por delante y
+            // no la película completa.
+            isLive: live,
             lazyLoad: true,
-            liveBufferLatencyChasing: true,
+            lazyLoadMaxDuration: live ? undefined : 60,
+            lazyLoadRecoverDuration: live ? undefined : 15,
+            liveBufferLatencyChasing: live,
+            accurateSeek: !live,
             autoCleanupSourceBuffer: true,
+            fixAudioTimestampGap: !live,
           },
         )
         mpegRef.current = mpeg
@@ -558,7 +612,8 @@ export function Player({
         })
         mpeg.on(mpegts.Events.ERROR, () => {
           if (allowFallback && tryFallback()) return
-          fail('El canal no responde o el formato MPEG-TS no es compatible.')
+          if (retryFullTranscode()) return
+          fail('No se pudo reproducir este archivo. SquizanTV intentó convertirlo, pero el formato sigue sin ser compatible.')
         })
         mpeg.load()
         attemptPlay()
@@ -638,6 +693,39 @@ export function Player({
     }
 
     /**
+     * Último recurso para películas: si el motor actual falla (MKV con un
+     * códec exótico, HEVC sin soporte del equipo, H.264 de 10 bits…), se
+     * recodifica el vídeo completo a H.264/AAC y se reintenta en el mismo
+     * segundo. Así el reproductor interno abre prácticamente cualquier MKV.
+     */
+    function retryFullTranscode(): boolean {
+      if (!isVod || fullRetryStarted) return false
+      if (transcodeRef.current?.full) return false
+      fullRetryStarted = true
+      const at = seekOffsetRef.current + (videoRef.current?.currentTime ?? 0)
+      cleanupEngines()
+      setStatus('loading')
+      setLoadNote('Convirtiendo el vídeo a un formato compatible…')
+      void (async () => {
+        try {
+          const trans = await window.nova.media.transcodeStream(channel.url, true, at)
+          if (disposed) return
+          if (!trans?.ok || !trans.url) {
+            fail(trans?.reason || 'No se pudo convertir este archivo para el reproductor interno.')
+            return
+          }
+          seekOffsetRef.current = at
+          transcodeRef.current = { full: true }
+          setLoadNote('')
+          startTs(trans.url, false, true)
+        } catch (error) {
+          if (!disposed) fail(error instanceof Error ? error.message : 'No se pudo convertir este archivo.')
+        }
+      })()
+      return true
+    }
+
+    /**
      * Salto en el tiempo para los vídeos que van convertidos a MPEG-TS en vivo.
      * El flujo convertido no admite `currentTime`, así que se levanta una nueva
      * conversión con `-ss` y se reengancha el reproductor en ese minuto.
@@ -669,11 +757,20 @@ export function Player({
     }
 
     const onPlaying = () => {
+      playIntentRef.current = true
       setStatus('playing')
       setLoadNote('')
     }
-    const onPause = () => setStatus((prev) => (prev === 'error' ? prev : 'paused'))
+    const onPause = () => {
+      if (statusRef.current === 'loading') return
+      setStatus((prev) => (prev === 'error' ? prev : 'paused'))
+    }
     const onWaiting = () => setStatus('loading')
+    const onCanPlay = () => {
+      if (!playIntentRef.current || disposed) return
+      if (!video.paused) return
+      void video.play().then(() => setStatus('playing')).catch(() => undefined)
+    }
     const onTime = () => setCurrentTime(seekOffsetRef.current + video.currentTime)
     const onMeta = () => {
       if (Number.isFinite(video.duration) && video.duration > 0) setDuration(video.duration)
@@ -681,7 +778,8 @@ export function Player({
     }
     const onVideoError = () => {
       if (video.error && tryFallback()) return
-      if (video.error) fail('El reproductor no pudo abrir este canal. Puede estar caido o requerir otro formato.')
+      if (video.error && retryFullTranscode()) return
+      if (video.error) fail('El reproductor no pudo abrir este archivo. Puede estar dañado o usar un formato que Chromium no admite.')
     }
     const onVolume = () => {
       setVolume(video.volume)
@@ -695,6 +793,7 @@ export function Player({
     video.addEventListener('playing', onPlaying)
     video.addEventListener('pause', onPause)
     video.addEventListener('waiting', onWaiting)
+    video.addEventListener('canplay', onCanPlay)
     video.addEventListener('timeupdate', onTime)
     video.addEventListener('loadedmetadata', onMeta)
     video.addEventListener('error', onVideoError)
@@ -733,31 +832,43 @@ export function Player({
                 startTs(channel.url, false)
                 return
               }
-              const audioOk = ['aac', 'mp3', 'mp2', 'opus', 'flac', 'vorbis'].includes(probe.audio ?? '')
-              const videoOk = ['h264', 'hevc', 'vp8', 'vp9', 'av1', 'mpeg1video', 'mpeg2video', 'mpeg4'].includes(probe.video ?? '')
-              const containerOk = ['matroska', 'webm', 'mov', 'mp4', 'm4a', 'mj2', '3gp', '3g2', 'ogg', 'wav', 'flac', 'adts', 'mp3', 'aac', 'm4v'].includes(probe.container ?? '')
+              const audioOk = DIRECT_AUDIO.has(probe.audio ?? '')
+              const containerOk = DIRECT_CONTAINERS.has(probe.container ?? '')
+              // En MKV no me fío de HEVC: según el equipo Chromium puede no
+              // decodificarlo. Se convierte a H.264 y funciona en todos.
+              const videoOk =
+                isDirectVideo(probe.video, probe.videoPixFmt) &&
+                !(probe.container === 'matroska' && probe.video === 'hevc')
               if (audioOk && videoOk && containerOk) {
                 startDirect(channel.url)
                 return
               }
-              // Audio Dolby/DTS (o contenedor exótico): convierto a AAC y sigo
-              // dentro de Nova con el motor MPEG-TS.
+              // Solo se copia el vídeo cuando es H.264 de 8 bits. HEVC, AV1,
+              // VP9, Hi10P y códecs antiguos se recodifican a H.264.
+              const copyVideo = isCopyableVideo(probe.video, probe.videoPixFmt)
+              const full = !copyVideo
               setLoadNote(
-                videoOk && containerOk
-                  ? 'Convirtiendo el audio (Dolby/DTS) a AAC…'
-                  : 'Convirtiendo el vídeo y el audio para el reproductor interno…',
+                full
+                  ? 'Convirtiendo el vídeo a un formato compatible…'
+                  : 'Convirtiendo el audio (Dolby/DTS) a AAC…',
               )
-              transcodeRef.current = { full: !(videoOk && containerOk) }
-              const trans = await window.nova.media.transcodeStream(channel.url, !(videoOk && containerOk))
+              const trans = await window.nova.media.transcodeStream(channel.url, full)
               if (disposed) return
               if (trans?.ok && trans.url) {
+                transcodeRef.current = { full }
                 startTs(trans.url, false, true)
                 return
               }
-              setAudioIssue(
-                `El audio de este fichero (${probe.audio || 'desconocido'}) no lo decodifica el reproductor interno.`,
-              )
-              startDirect(channel.url)
+              // Si falló la conversión de solo audio, al menos intento el
+              // archivo original (puede verse sin sonido).
+              if (!full && containerOk && videoOk) {
+                setAudioIssue(
+                  `El audio de este fichero (${probe.audio || 'desconocido'}) no lo decodifica el reproductor interno.`,
+                )
+                startDirect(channel.url)
+                return
+              }
+              fail(trans?.reason || 'No se pudo convertir este archivo para el reproductor interno.')
               return
             }
           } catch {
@@ -785,6 +896,7 @@ export function Player({
       video.removeEventListener('playing', onPlaying)
       video.removeEventListener('pause', onPause)
       video.removeEventListener('waiting', onWaiting)
+      video.removeEventListener('canplay', onCanPlay)
       video.removeEventListener('timeupdate', onTime)
       video.removeEventListener('loadedmetadata', onMeta)
       video.removeEventListener('error', onVideoError)
@@ -846,8 +958,13 @@ export function Player({
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
-    if (video.paused) void video.play()
-    else video.pause()
+    if (video.paused) {
+      playIntentRef.current = true
+      void video.play()
+    } else {
+      playIntentRef.current = false
+      video.pause()
+    }
   }
 
   /** Tiempo absoluto del vídeo (incluye el desfase de una conversión reiniciada). */
@@ -857,6 +974,7 @@ export function Player({
   const seekTo = (seconds: number) => {
     const video = videoRef.current
     if (!video) return
+    playIntentRef.current = true
     const limit = duration > 0 ? duration : channel.duration && channel.duration > 0 ? channel.duration : 0
     const target = Math.max(0, limit > 0 ? Math.min(seconds, limit) : seconds)
     if (transcodeRef.current && seekRestartRef.current) {
@@ -936,7 +1054,8 @@ export function Player({
             <p>{error}</p>
             {transient && (
               <p className="player-error-hint">
-                Si el archivo es MKV, H.265 o tiene un códec poco habitual, el reproductor interno puede no abrirlo.
+                SquizanTV ya intenta convertir el vídeo y el audio a un formato compatible. Si aun así falla, el
+                archivo puede estar dañado o usar un códec que la conversión interna no admite.
                 {externalPlayer ? ` Prueba con ${externalPlayer}.` : ' Instala VLC para abrirlo sin problemas.'}
               </p>
             )}

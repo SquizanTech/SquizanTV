@@ -44,7 +44,7 @@ const api = {
       ipcRenderer.invoke('media:probeTs', url),
     probeStream: (
       url: string,
-    ): Promise<{ ok: boolean; container?: string; video?: string; audio?: string; duration?: number; reason?: string }> =>
+    ): Promise<{ ok: boolean; container?: string; video?: string; videoPixFmt?: string; audio?: string; duration?: number; reason?: string }> =>
       ipcRenderer.invoke('media:probeStream', url),
     transcodeStream: (
       url: string,

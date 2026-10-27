@@ -9,17 +9,25 @@ import type { AddressInfo } from 'node:net'
 /**
  * Sonda y transcodificación con el ffmpeg empaquetado (@ffmpeg-installer).
  *
- * Chromium/Electron no decodifica Dolby (AC-3/E-AC-3), DTS ni TrueHD, y no
- * demuxa contenedores como AVI. VLC sí. Para que un magnet "suenec" dentro de
- * Nova, si el audio no es soportado lo convertimos a AAC en caliente (copiando
- * el vídeo tal cual) y lo servimos como MPEG-TS en vivo por HTTP local, que el
- * reproductor MPEG-TS de la app ya sabe consumir.
+ * Chromium/Electron no decodifica Dolby (AC-3/E-AC-3), DTS ni TrueHD, no
+ * demuxa bien MKV en todas las versiones y no admite HEVC/AV1/VP9 en cualquier
+ * equipo. Para que una película se abra siempre dentro de SquizanTV:
+ *
+ * - si el vídeo es H.264 de 8 bits se copia (sin gastar CPU) y solo se
+ *   convierte el audio a AAC;
+ * - si es HEVC, H.264 de 10 bits, AV1, VP9 o un códec antiguo se recodifica a
+ *   H.264 de 8 bits, limitado a 1080p para que un 4K no sature la CPU.
+ *
+ * El resultado se sirve como MPEG-TS por HTTP local, que es lo que consume
+ * mpegts.js dentro de la app.
  */
 
 export interface StreamProbeResult {
   ok: boolean
   container?: string
   video?: string
+  /** Formato de pixeles del video (yuv420p, yuv420p10le, ...). */
+  videoPixFmt?: string
   audio?: string
   duration?: number
   reason?: string
@@ -72,14 +80,32 @@ export function isAudioSupported(codec: string): boolean {
   return ['aac', 'mp3', 'mp2', 'opus', 'flac', 'vorbis'].includes(codec)
 }
 
-/** Códecs de vídeo que podemos copiar sin recodificar (el resto va a H.264). */
-export function isVideoCopyable(codec: string): boolean {
-  return ['h264', 'hevc', 'vp8', 'vp9', 'av1', 'mpeg1video', 'mpeg2video', 'mpeg4'].includes(codec)
+/**
+ * Códecs de vídeo que se pueden copiar a MPEG-TS sin recodificar.
+ *
+ * Solo H.264 de 8 bits y 4:2:0: es lo que mpegts.js y Chromium decodifican de
+ * forma fiable. HEVC, AV1, VP9, MPEG-4 y H.264 de 10 bits (Hi10P) se recodifican
+ * a H.264; copiarlos era la causa de que muchos MKV terminasen con el error
+ * "el formato MPEG-TS no es compatible".
+ */
+export function isVideoCopyable(codec: string, pixFmt = ''): boolean {
+  if (codec !== 'h264') return false
+  const fmt = pixFmt.toLowerCase()
+  if (!fmt) return false
+  return ['yuv420p', 'yuvj420p', 'nv12'].includes(fmt)
 }
 
 /** Contenedores que Chromium demuxa de forma nativa. */
 export function isContainerNative(container: string): boolean {
   return ['matroska', 'webm', 'mpegts', 'mov', 'mp4', 'm4a', 'mj2', '3gp', '3g2', 'ogg', 'wav', 'flac', 'adts', 'mp3', 'aac', 'caf', 'm4v'].includes(container)
+}
+
+/** Vídeo que Chromium reproduce sin recodificar (si el contenedor lo permite). */
+export function isVideoDirect(codec: string, pixFmt = ''): boolean {
+  const fmt = pixFmt.toLowerCase()
+  const eightBit420 = ['h264', 'hevc'].includes(codec) && ['yuv420p', 'yuvj420p', 'nv12'].includes(fmt)
+  const modern = ['vp8', 'vp9', 'av1'].includes(codec)
+  return eightBit420 || modern
 }
 
 /**
@@ -129,6 +155,7 @@ export function probeStream(srcUrl: string, timeoutMs = 45000): Promise<StreamPr
       const lines = text.split('\n')
       const videos: string[] = []
       const audios: string[] = []
+      let videoPixFmt = ''
       let duration = 0
       for (const line of lines) {
         const durationMatch = /Duration: (\d+):(\d+):([\d.]+)/.exec(line)
@@ -141,7 +168,13 @@ export function probeStream(srcUrl: string, timeoutMs = 45000): Promise<StreamPr
         if (!streamMatch) continue
         const codec = streamMatch[2].toLowerCase()
         if (streamMatch[1] === 'Video') {
-          if (!['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(codec)) videos.push(codec)
+          if (['mjpeg', 'png', 'bmp', 'gif', 'webp'].includes(codec)) continue
+          videos.push(codec)
+          if (!videoPixFmt) {
+            // "Video: h264 (High 10), yuv420p10le(tv, ...)" -> yuv420p10le
+            const pix = /Video: [\w]+(?: \([^)]*\))?, ([\w]+)/.exec(line)
+            if (pix) videoPixFmt = pix[1].toLowerCase()
+          }
         } else {
           audios.push(codec)
         }
@@ -149,7 +182,7 @@ export function probeStream(srcUrl: string, timeoutMs = 45000): Promise<StreamPr
       if (!container && videos.length === 0 && audios.length === 0) {
         return { ok: false, reason: tail(text) || 'no se pudo analizar el fichero' }
       }
-      return { ok: true, container, video: videos[0], audio: audios[0], duration: Math.round(duration) }
+      return { ok: true, container, video: videos[0], videoPixFmt, audio: audios[0], duration: Math.round(duration) }
     }
 
     function tail(text: string): string {
@@ -223,9 +256,9 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
     }
     if (session.res === res) session.res = null
     if (!session.res && session.proc.exitCode === null && !session.idle) {
-      // Si nadie reconecta en 8 s (cambio de canal, cierre del reproductor),
-      // matamos el ffmpeg para no gastar CPU ni red.
-      session.idle = setTimeout(() => killSession(session.id), 8000)
+      // Si nadie reconecta en 3 s (cambio de canal, salto en el tiempo, cierre
+      // del reproductor), matamos el ffmpeg para no gastar CPU ni red.
+      session.idle = setTimeout(() => killSession(session.id), 3000)
     }
   })
 }
@@ -253,15 +286,43 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false, sta
   if (!port) return { ok: false, reason: 'No se pudo abrir el servidor local de conversión.' }
 
   const id = randomBytes(6).toString('hex')
-  const args = ['-hide_banner', '-loglevel', 'warning', '-nostdin', '-re']
-  // Salto en el tiempo: `-ss` antes de `-i` hace un seek rapido en la fuente
+  // Sin `-re`: para una película conviene producir tan rápido como el
+  // reproductor consuma. mpegts.js deja de pedir datos cuando tiene suficiente
+  // búfer (ver lazyLoad), la tubería se llena y ffmpeg se detiene, así que no
+  // se descarga la película entera de golpe. Con `-re` el primer fotograma
+  // tardaba más de 10 s porque el búfer inicial se llenaba a ritmo real.
+  const args = ['-hide_banner', '-loglevel', 'warning', '-nostdin']
+  // Salto en el tiempo: `-ss` antes de `-i` hace un seek rápido en la fuente
   // (el servidor de torrents responde con Range) y el flujo nuevo empieza a
-  // emitirse desde ahi. El reproductor suma este desfase a su cronometro.
+  // emitirse desde ahí. El reproductor suma este desfase a su cronómetro.
   if (startSeconds > 0) args.push('-ss', startSeconds.toFixed(3))
   args.push('-i', srcUrl, '-sn', '-dn')
-  if (fullTranscode) args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23')
-  else args.push('-c:v', 'copy')
-  args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k', '-muxdelay', '0', '-muxpreload', '0', '-flush_packets', '1', '-f', 'mpegts', 'pipe:1')
+  if (fullTranscode) {
+    // HEVC/AV1/VP9/Hi10P y contenedores exóticos: H.264 de 8 bits, que es lo
+    // que mpegts.js reproduce siempre. Se limita a 1080p para que un 4K no
+    // sature la CPU; si la fuente es menor, se conserva su tamaño.
+    args.push(
+      '-c:v', 'libx264',
+      '-preset', 'ultrafast',
+      '-crf', '23',
+      '-pix_fmt', 'yuv420p',
+      '-vf', "scale=w='min(1920,iw)':h=-2",
+      '-max_muxing_queue_size', '4096',
+    )
+  } else {
+    args.push('-c:v', 'copy')
+  }
+  args.push(
+    '-c:a', 'aac',
+    '-ac', '2',
+    '-ar', '48000',
+    '-b:a', '192k',
+    '-muxdelay', '0',
+    '-muxpreload', '0',
+    '-flush_packets', '1',
+    '-f', 'mpegts',
+    'pipe:1',
+  )
 
   let proc: ChildProcess
   try {
@@ -293,15 +354,25 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false, sta
   })
 
   // Si ffmpeg muere nada más arrancar (fichero corrupto o sin datos), fallamos
-  // en vez de dar una URL vacía al reproductor.
+  // en vez de dar una URL vacía al reproductor. En cuanto sale el primer bloque
+  // devolvemos la URL: así el vídeo empieza sin esperas artificiales.
   const earlyExit = await new Promise<string | null>((resolve) => {
+    let settled = false
     const done = (value: string | null) => {
+      if (settled) return
+      settled = true
       clearTimeout(wait)
       proc.removeListener('close', onClose)
+      proc.stdout?.removeListener('readable', onData)
       resolve(value)
     }
-    const onClose = (code: number | null) => done(code === null ? null : session.stderrTail.slice(-300) || `ffmpeg salió con código ${code}`)
-    const wait = setTimeout(() => done(null), 2500)
+    const onData = () => done(null)
+    const onClose = (code: number | null) =>
+      done(code === null ? null : session.stderrTail.slice(-300) || `ffmpeg salió con código ${code}`)
+    const wait = setTimeout(() => done(null), 1200)
+    // `readable` deja los datos en el búfer. Con `data` el stream pasaría a
+    // modo flowing y se perderían los bloques anteriores a la petición HTTP.
+    proc.stdout?.once('readable', onData)
     proc.once('close', onClose)
   })
   if (earlyExit !== null) {

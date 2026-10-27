@@ -17,10 +17,10 @@ Reproductor de escritorio para Windows con IPTV (M3U y Xtream Codes), EPG, pelí
 Entra en **[Releases](https://github.com/SquizanTech/NovaTV/releases)** y descarga el archivo más reciente:
 
 ```
-SquizanTV-Setup-0.5.0.exe
+SquizanTV-Setup-0.5.1.exe
 ```
 
-También puedes usar la versión portable `SquizanTV-Portable-0.5.0.exe` si no quieres instalar nada.
+También puedes usar la versión portable `SquizanTV-Portable-0.5.1.exe` si no quieres instalar nada.
 
 ### 2. Ejecuta el instalador
 
@@ -98,7 +98,7 @@ npm run dist
 
 Genera en `release/`:
 
-- `SquizanTV-Setup-0.5.0.exe`: instalador NSIS.
+- `SquizanTV-Setup-0.5.1.exe`: instalador NSIS.
 - `latest.yml` y el `.blockmap`: necesarios para las actualizaciones.
 - `win-unpacked/`: versión sin instalar para probar.
 
@@ -148,12 +148,17 @@ El renderer nunca accede a Node directamente: todo pasa por `window.nova` con `c
 2. Al recibir los metadatos se detecta el vídeo principal y se preparan sus primeros 2 MB con prioridad alta.
 3. El servidor HTTP local (`127.0.0.1`) sirve los archivos con soporte de `Range`. Cada petición abierta se entrega en bloques de **2 MB** y la ventana solicitada se marca con prioridad alta dentro de WebTorrent. Así el reproductor recibe primero lo que necesita para el primer fotograma, incluido el átomo `moov` de los MP4 que lo llevan al final.
 4. La descarga es secuencial sobre la zona que se está viendo; no se descarga el archivo completo antes de empezar.
-5. Si el contenedor o el audio no son compatibles con Chromium (MKV con AC-3/DTS, AVI, etc.), se convierte a MPEG-TS con audio AAC usando el ffmpeg integrado. El vídeo se copia siempre que sea posible.
-6. Para saltar en el tiempo en una conversión, se reinicia ffmpeg con `-ss` en el minuto elegido y se reengancha el reproductor; en archivos compatibles el salto es nativo.
+5. Antes de reproducir se sondea el archivo con ffmpeg (contenedor, códec de vídeo y formato de píxeles). Si Chromium puede abrirlo tal cual, se reproduce directamente.
+6. Si el audio no es compatible (AC-3/E-AC-3/DTS/TrueHD) se convierte a AAC y el vídeo se **copia** sin recodificar, salvo que no sea H.264 de 8 bits.
+7. HEVC/H.265, H.264 de 10 bits (Hi10P), AV1, VP9 y códecs antiguos se **recodifican a H.264 de 8 bits con AAC**, limitados a 1080p para no saturar la CPU. Así los MKV habituales se abren aunque el equipo no decodifique H.265.
+8. Si el motor falla con un archivo concreto, el reproductor reintenta automáticamente con una conversión completa antes de mostrar un error.
+9. Para saltar en el tiempo en una conversión, se reinicia ffmpeg con `-ss` en el minuto elegido y se reengancha el reproductor; en archivos compatibles el salto es nativo.
+10. La conversión no usa `-re`: produce datos tan rápido como el reproductor los consume. mpegts.js mantiene unos 60 s de búfer por delante, así que el primer fotograma llega en menos de un segundo sin descargar la película entera de golpe.
 
 ### Reproductor
 
 - `hls.js` para HLS y `mpegts.js` para MPEG-TS, con fallback automático.
+- MKV y MP4 se abren de forma nativa cuando el códec lo permite; si no, SquizanTV convierte en caliente con el ffmpeg integrado (vídeo a H.264 de 8 bits y audio a AAC) y lo sirve como MPEG-TS local.
 - Películas y episodios: barra de posición, tiempo transcurrido/total, saltos de ±10 y ±30 segundos y atajos de teclado.
 - `←` / `→`: retroceder o avanzar 10 segundos en películas; cambiar de canal en directo.
 - `Espacio`: reproducir o pausar. `F`: pantalla completa. `M`: silencio. `C`: siguiente pista de subtítulos.
@@ -190,7 +195,7 @@ Las actualizaciones solo funcionan en la app instalada, no en `npm run dev`.
 
 - **DRM**: no reproduce Widevine (Netflix, Disney+, etc.).
 - **Firma de código**: el instalador no está firmado; SmartScreen mostrará un aviso.
-- **Códecs**: dependen de Chromium/Electron. MP4 H.264/AAC y WebM funcionan siempre; H.265/AV1 pueden fallar. En ese caso se ofrece VLC/mpv.
+- **Códecs**: el reproductor interno abre MP4, MKV y WebM. H.264/AAC reproduce directo; AC-3/DTS, HEVC, Hi10P, AV1 y VP9 se convierten automáticamente a H.264/AAC. La conversión usa la CPU (no hay aceleración por GPU), así que un 4K puede tardar más en arrancar. VLC/mpv siguen disponibles como alternativa.
 - **Torrents**: necesitan pares accesibles. Si el firewall bloquea UDP, la DHT no encuentra pares; usa enlaces con trackers y permite SquizanTV en redes privadas.
 - Al usar BitTorrent tu IP es visible para los demás pares. Para contenido privado, usa una VPN.
 - Algunos proveedores limitan conexiones simultáneas o bloquean el User-Agent.
