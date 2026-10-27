@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Channel, EpgData, PageId, Playlist, TorrentDetails, TorrentFileInfo, TorrentSnapshot } from './types'
 import { useDb } from './store'
 import { parseXmltv } from './lib/xmltv'
-import { baseName, formatSpeed } from './lib/util'
+import { baseName, formatSpeed, uid } from './lib/util'
 import { Sidebar } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { Player } from './components/Player'
@@ -12,6 +12,7 @@ import { HomePage } from './pages/HomePage'
 import { LivePage } from './pages/LivePage'
 import { MoviesPage } from './pages/MoviesPage'
 import { SeriesPage } from './pages/SeriesPage'
+import { DiscoverPage } from './pages/DiscoverPage'
 import { EpgPage } from './pages/EpgPage'
 import { TorrentsPage } from './pages/TorrentsPage'
 import { FavoritesPage } from './pages/FavoritesPage'
@@ -149,6 +150,28 @@ export default function App() {
     })
   }, [player?.torrentId])
 
+  // Fuentes directas de addons (HTTP/HLS): se envuelven en una lista temporal
+  // para reutilizar el reproductor sin ensuciar historial ni listas.
+  const playDirect = useCallback((url: string, title: string, details: TorrentDetails) => {
+    const channel: Channel = {
+      id: `addon:${uid()}`,
+      name: title,
+      url,
+      group: 'Addons',
+      kind: 'movie',
+      addedAt: Date.now(),
+    }
+    const synthetic: Playlist = {
+      id: `addon:${uid()}`,
+      name: title,
+      type: 'm3u',
+      channels: [channel],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    setPlayer({ channel, playlist: synthetic, list: [channel], transient: true, details })
+  }, [])
+
   const counts = useMemo(() => {
     const channels = playlist?.channels ?? []
     return {
@@ -171,11 +194,11 @@ export default function App() {
     )
   }
 
-  const showSearch = page !== 'settings' && page !== 'playlists' && page !== 'torrents'
+  const showSearch = page !== 'settings' && page !== 'playlists' && page !== 'torrents' && page !== 'discover'
 
   return (
     <div className="app">
-      <Sidebar page={page} onNavigate={navigate} playlist={playlist} counts={counts} />
+      <Sidebar page={page} onNavigate={navigate} counts={counts} />
 
       <div className="main">
         <Topbar
@@ -183,8 +206,8 @@ export default function App() {
           query={query}
           onQuery={setQuery}
           onAdd={() => setAddOpen(true)}
-          playlistName={playlist?.name}
           showSearch={showSearch}
+          showAdd={page !== 'discover'}
         />
 
         {page === 'home' && (
@@ -199,6 +222,7 @@ export default function App() {
         {page === 'live' && <LivePage playlist={playlist} query={query} epg={epg} onPlay={play} />}
         {page === 'movies' && <MoviesPage playlist={playlist} query={query} onPlay={play} />}
         {page === 'series' && <SeriesPage playlist={playlist} query={query} onPlay={play} />}
+        {page === 'discover' && <DiscoverPage onPlayTorrent={playTorrent} onPlayDirect={playDirect} />}
         {page === 'epg' && (
           <EpgPage
             playlist={playlist}

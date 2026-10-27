@@ -10,6 +10,8 @@ Reproductor IPTV de escritorio para Windows, inspirado en IPTVnator. Listas M3U/
 - **Xtream Codes**: login con servidor/usuario/contraseña, canales en directo, películas, series con temporadas y episodios.
 - **EPG XMLTV**: descarga automática (incluye `.xml.gz` descomprimido en el proceso principal), "ahora/siguiente", línea de tiempo de 12 horas y guía por canal.
 - **Torrents**: reproduce enlaces magnet y archivos `.torrent` mientras se descargan, con arranque en segundos, descarga secuencial por bloques (estilo Stremio/WebTorrent) y búsqueda en el tiempo (seek).
+- **Descubrir con addons de Stremio (0.4.0)**: instala addons por URL o manifest (`stremio://…`), activa o desactiva cada uno y navega por sus catálogos con géneros, búsqueda y fichas completas. Las fuentes de addons como Torrentio se reproducen con el motor de torrents interno, sin salir de Nova.
+- **Rediseño minimalista (0.4.0)**: interfaz oscura premium en negro (`#0D0D0D`), tarjetas `#1A1A1A`, acento rojo `#E50914` y detalles dorados `#FFB800`; navegación más limpia y foco en el contenido.
 - **Fichas de película desde el propio torrent**: detecta póster, fanart y logo (`.jpg`, `.png`…) y lee la sinopsis, año, género, nota y duración del `.nfo` de Kodi (UTF-8 o Windows-1252).
 - **Subtítulos estilo VLC**: menú CC con las pistas incluidas en el vídeo (HLS), los archivos `.srt`/`.vtt`/`.ass` que vengan dentro del torrent (se convierten SRT/ASS → cues WebVTT al vuelo) y "Añadir archivo de subtítulos…" del disco. Atajos: `C` cambia de pista.
 - **Pistas de audio**: selector en HLS (multi-audio) y nativo cuando el motor lo expone; para MKV con doble audio usa el botón de VLC.
@@ -54,8 +56,8 @@ npm run dist
 
 Genera en `release/`:
 
-- `NovaTV-Setup-0.3.3.exe` - instalador NSIS (elige carpeta, crea accesos directos).
-- `NovaTV-Setup-0.3.3.exe.blockmap` y `latest.yml` - necesarios para actualizaciones.
+- `NovaTV-Setup-0.4.0.exe` - instalador NSIS (elige carpeta, crea accesos directos).
+- `NovaTV-Setup-0.4.0.exe.blockmap` y `latest.yml` - necesarios para actualizaciones.
 - `win-unpacked/` — versión sin instalar para probar.
 
 Versión portable (un solo `.exe`):
@@ -81,6 +83,17 @@ Para publicar una versión nueva: sube `version` en `package.json`, vuelve a com
 
 > Las actualizaciones solo funcionan en la app instalada (no en `npm run dev`).
 
+## Addons de Stremio
+
+En **Descubrir** puedes instalar addons de catálogo y metadatos del ecosistema Stremio:
+
+1. Pulsa **Addons** y pega la URL del manifest (`https://…/manifest.json`), la raíz del addon o un enlace `stremio://…`.
+2. Activa o desactiva cada addon con el interruptor, o quítalo con la papelera.
+3. Elige addon, catálogo, género y busca dentro del catálogo. Al abrir una ficha se cargan sinopsis, reparto y temporadas/episodios.
+4. Las fuentes se piden a todos los addons activos que ofrezcan `stream`. Un enlace magnet se añade al motor de torrents; una URL directa/HLS se abre en el reproductor; los enlaces externos se abren en el navegador.
+
+Recomendados desde la propia app: **Cinemeta** (catálogos de IMDb) y **Torrentio** (fuentes magnet). Nova no incluye ni aloja addons: cada usuario decide cuáles instala y es responsable del uso que haga de ellos.
+
 ## Torrents (magnet y `.torrent`)
 
 En la sección **Torrents** puedes pegar un enlace `magnet:` o abrir un archivo `.torrent`.
@@ -101,7 +114,7 @@ Metadatos de la ficha:
 
 Notas:
 
-- No integra addons de Stremio ni índices tipo Torrentio: solo reproduce el magnet o `.torrent` que tú aportes.
+- Los addons se gestionan en **Descubrir**; Torrents sigue aceptando cualquier magnet o `.torrent` que aportes directamente.
 - Si no aparecen pares, revisa el firewall de Windows (permite NovaTV en redes privadas) y que el enlace incluya trackers (`&tr=`).
 - Al usar BitTorrent tu IP es visible para los demás pares. Para contenido privado, usa una VPN o comparte el archivo por otro medio.
 - La compatibilidad de códecs depende de Chromium/Electron: MP4 (H.264/AAC) y WebM funcionan siempre; MKV con H.264 también (probado a 720p); H.265/AV1 puede no reproducirse. Si falla, el reproductor ofrece «Abrir en VLC» cuando detecta VLC o mpv instalado.
@@ -126,9 +139,9 @@ node scripts\real-torrent-check.cjs
 electron/                 proceso principal + preload (IPC, red, actualizador)
 electron/torrent-service.ts  cliente BitTorrent + servidor HTTP con rangos
 electron/torrent.ts       puente IPC de torrents y diálogo .torrent
-src/lib/                  parsers M3U, XMLTV, cliente Xtream, utilidades
+src/lib/                  parsers M3U, XMLTV, cliente Xtream, cliente Stremio, utilidades
 src/components/           Sidebar, Topbar, reproductor, tarjetas, modales
-src/pages/                Inicio, Directo, Películas, Series, EPG, Torrents...
+src/pages/                Inicio, Directo, Descubrir, Películas, Series, EPG, Torrents...
 src/store.tsx             estado global + persistencia (novatv.json)
 src/styles.css            sistema visual completo
 ```
@@ -154,4 +167,4 @@ El proceso principal expone en `window.nova`:
 
 ## Legal
 
-NovaTV no incluye, aloja ni distribuye listas, canales, torrents ni contenido. Solo reproduce las fuentes que el usuario configure. Tampoco incorpora índices de torrents ni addons de Stremio. Usa únicamente listas, cuentas y archivos sobre los que tengas derechos.
+NovaTV no incluye, aloja ni distribuye listas, canales, torrents, addons ni contenido. Solo reproduce las fuentes que el usuario configure o instale. Usa únicamente listas, cuentas, addons y archivos sobre los que tengas derechos.

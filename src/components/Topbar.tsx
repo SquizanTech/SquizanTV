@@ -6,30 +6,29 @@ interface TopbarProps {
   query: string
   onQuery: (value: string) => void
   onAdd: () => void
-  playlistName?: string
   showSearch?: boolean
+  showAdd?: boolean
 }
 
-const titles: Record<PageId, { title: string; subtitle: string }> = {
-  home: { title: 'Inicio', subtitle: 'Todo tu entretenimiento en un solo lugar' },
-  live: { title: 'En directo', subtitle: 'Canales de television en vivo' },
-  movies: { title: 'Películas', subtitle: 'Tu videoteca a la carta' },
-  series: { title: 'Series', subtitle: 'Temporadas y episodios' },
-  epg: { title: 'Guía de programación', subtitle: 'Que hay ahora y despues' },
-  torrents: { title: 'Torrents', subtitle: 'Reproduce enlaces magnet y archivos .torrent' },
-  favorites: { title: 'Favoritos', subtitle: 'Lo que no quieres perderte' },
-  history: { title: 'Historial', subtitle: 'Vuelve a lo ultimo que viste' },
-  playlists: { title: 'Mis listas', subtitle: 'Gestiona M3U y Xtream Codes' },
-  settings: { title: 'Ajustes', subtitle: 'Apariencia, EPG y actualizaciones' },
+const titles: Record<PageId, string> = {
+  home: 'Inicio',
+  live: 'En directo',
+  movies: 'Películas',
+  series: 'Series',
+  discover: 'Descubrir',
+  epg: 'Guía de programación',
+  torrents: 'Torrents',
+  favorites: 'Favoritos',
+  history: 'Historial',
+  playlists: 'Mis listas',
+  settings: 'Ajustes',
 }
 
-export function Topbar({ page, query, onQuery, onAdd, playlistName, showSearch = true }: TopbarProps) {
-  const info = titles[page]
+export function Topbar({ page, query, onQuery, onAdd, showSearch = true, showAdd = true }: TopbarProps) {
   return (
     <header className="topbar">
       <div className="topbar-title">
-        <h1>{info.title}</h1>
-        <span>{info.subtitle}</span>
+        <h1>{titles[page]}</h1>
       </div>
 
       <div className="topbar-actions">
@@ -49,16 +48,12 @@ export function Topbar({ page, query, onQuery, onAdd, playlistName, showSearch =
             )}
           </label>
         )}
-        {playlistName && page !== 'playlists' && (
-          <span className="topbar-playlist" title={playlistName}>
-            <Icon name="wifi" size={14} />
-            {playlistName}
-          </span>
+        {showAdd && (
+          <button type="button" className="btn btn-primary" onClick={onAdd}>
+            <Icon name="plus" size={16} />
+            <span>Añadir lista</span>
+          </button>
         )}
-        <button type="button" className="btn btn-primary" onClick={onAdd}>
-          <Icon name="plus" size={16} />
-          <span>Añadir lista</span>
-        </button>
       </div>
     </header>
   )
