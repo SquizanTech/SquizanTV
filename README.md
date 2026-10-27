@@ -17,10 +17,10 @@ Reproductor de escritorio para Windows con IPTV (M3U y Xtream Codes), EPG, pelí
 Entra en **[Releases](https://github.com/SquizanTech/NovaTV/releases)** y descarga el archivo más reciente:
 
 ```
-SquizanTV-Setup-0.5.2.exe
+SquizanTV-Setup-0.5.3.exe
 ```
 
-También puedes usar la versión portable `SquizanTV-Portable-0.5.2.exe` si no quieres instalar nada.
+También puedes usar la versión portable `SquizanTV-Portable-0.5.3.exe` si no quieres instalar nada.
 
 ### 2. Ejecuta el instalador
 
@@ -98,7 +98,7 @@ npm run dist
 
 Genera en `release/`:
 
-- `SquizanTV-Setup-0.5.2.exe`: instalador NSIS.
+- `SquizanTV-Setup-0.5.3.exe`: instalador NSIS.
 - `latest.yml` y el `.blockmap`: necesarios para las actualizaciones.
 - `win-unpacked/`: versión sin instalar para probar.
 
@@ -154,6 +154,7 @@ El renderer nunca accede a Node directamente: todo pasa por `window.nova` con `c
 8. Si el motor falla con un archivo concreto, el reproductor reintenta automáticamente con una conversión completa antes de mostrar un error.
 9. Para saltar en el tiempo en una conversión, se reinicia ffmpeg con `-ss` en el minuto elegido y se reengancha el reproductor; en archivos compatibles el salto es nativo.
 10. La conversión no usa `-re`: produce datos tan rápido como el reproductor los consume. mpegts.js mantiene unos 60 s de búfer por delante, así que el primer fotograma llega en menos de un segundo sin descargar la película entera de golpe.
+11. Cuando mpegts.js llena su búfer corta la conexión y la reabre después con `Range: bytes=N-`. El servidor de conversión mantiene viva la sesión 90 s y conserva los últimos 24 MB del flujo, de modo que responde con el byte exacto que pide el reproductor y la película continúa sin errores ni avisos. Si aun así se corta, el reproductor levanta otra conversión en el segundo actual de forma silenciosa.
 
 ### Reproductor
 

@@ -41,12 +41,49 @@ export interface TranscodeResult {
 
 interface TranscodeSession {
   id: string
+  srcUrl: string
   proc: ChildProcess
   res: http.ServerResponse | null
   idle: NodeJS.Timeout | null
   stderrTail: string
   exited: boolean
+  /**
+   * Ultimos bloques producidos por ffmpeg. mpegts.js corta la conexion cuando
+   * ya tiene 60 s de bufer y la reabre despues con `Range: bytes=N-` desde la
+   * posicion que aun no habia consumido. Sin estos bloques el servidor no
+   * podria contestar a esa peticion (antes respondia 404 y el reproductor
+   * mostraba el aviso de error).
+   */
+  chunks: Buffer[]
+  /** Offset absoluto del primer byte de `chunks[0]` dentro del flujo TS. */
+  start: number
+  /** Offset absoluto tras el ultimo byte recibido de ffmpeg. */
+  end: number
+  /** Siguiente byte que hay que enviar por `res`. */
+  sent: number
+  /** Ultimo byte (sin incluirlo) que pidio el cliente; Infinity si es abierto. */
+  limit: number
+  /** `res` no acepta mas datos ahora mismo (contrapresion). */
+  blocked: boolean
 }
+
+/**
+ * Bytes que se guardan de cada conversion para poder reanudarla.
+ *
+ * mpegts.js guarda como maximo 8 MB de datos sin consumir, asi que con 24 MB
+ * hay margen de sobra para contestar al `Range` de reconexion con los bytes
+ * exactos que pide.
+ */
+const RETAIN_BYTES = 24 * 1024 * 1024
+
+/**
+ * Tiempo que se mantiene viva una conversion sin ningun reproductor conectado.
+ *
+ * mpegts.js pausa la conexion al llenar el bufer y la reanuda unos 45 s
+ * despues; hay que esperar mas que eso para no matar ffmpeg justo antes de que
+ * vuelva a pedir datos.
+ */
+const IDLE_KILL_MS = 90_000
 
 const sessions = new Map<string, TranscodeSession>()
 let server: http.Server | null = null
@@ -205,6 +242,73 @@ async function ensureServer(): Promise<number> {
   return serverPort
 }
 
+/** Elimina de la retencion los bytes anteriores a `offset`. */
+function dropBefore(session: TranscodeSession, offset: number): void {
+  while (session.chunks.length > 0 && session.start + session.chunks[0].length <= offset) {
+    session.start += session.chunks[0].length
+    session.chunks.shift()
+  }
+  if (session.chunks.length > 0 && session.start < offset) {
+    const skip = offset - session.start
+    session.chunks[0] = session.chunks[0].subarray(skip)
+    session.start = offset
+  }
+}
+
+/** Libera los bloques mas antiguos que ya no hacen falta para reconectar. */
+function trimRetention(session: TranscodeSession): void {
+  const keepFrom = session.res ? Math.min(session.sent, session.end - RETAIN_BYTES) : session.end - RETAIN_BYTES
+  if (keepFrom > session.start) dropBefore(session, keepFrom)
+}
+
+/** Bloques que cubren [from, to) del flujo convertido. */
+function readRange(session: TranscodeSession, from: number, to: number): Buffer[] {
+  const pieces: Buffer[] = []
+  let offset = session.start
+  for (const chunk of session.chunks) {
+    if (offset >= to) break
+    const chunkEnd = offset + chunk.length
+    if (chunkEnd > from) {
+      const begin = Math.max(0, from - offset)
+      pieces.push(chunk.subarray(begin, Math.min(chunk.length, to - offset)))
+    }
+    offset = chunkEnd
+  }
+  return pieces
+}
+
+/** Envia a la respuesta actual todo lo que haya disponible. */
+function flushSession(session: TranscodeSession): void {
+  const res = session.res
+  if (!res || res.destroyed || session.blocked) return
+  const to = Math.min(session.end, session.limit)
+  if (session.sent >= session.limit) {
+    if (!res.writableEnded) res.end()
+    session.res = null
+    session.sent = session.end
+    session.limit = Infinity
+    session.proc.stdout?.pause()
+    scheduleIdleKill(session)
+    return
+  }
+  if (session.sent >= to) return
+  for (const piece of readRange(session, session.sent, to)) {
+    session.sent += piece.length
+    if (!res.write(piece)) {
+      // El reproductor no puede absorber mas ahora mismo: se deja de leer de
+      // ffmpeg hasta que la respuesta se vacie. Asi la tuberia hace de freno.
+      session.blocked = true
+      session.proc.stdout?.pause()
+      return
+    }
+  }
+}
+
+function scheduleIdleKill(session: TranscodeSession): void {
+  if (session.idle) clearTimeout(session.idle)
+  session.idle = setTimeout(() => killSession(session), IDLE_KILL_MS)
+}
+
 function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
   res.on('error', () => undefined)
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
@@ -227,8 +331,35 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
     return
   }
 
+  // Una peticion nueva de la misma pelicula (un salto en el tiempo) deja
+  // obsoletas las conversiones anteriores. Se cierran en cuanto la nueva
+  // empieza a consumirse, no antes, para no cortar el fotograma en pantalla.
+  for (const [otherId, other] of sessions) {
+    if (otherId !== session.id && other.srcUrl === session.srcUrl) killSession(other)
+  }
+
+  // mpegts.js reabre el flujo con el byte exacto que aun no habia consumido.
+  // Antes se ignoraba y se respondia desde donde estuviera ffmpeg (o 404 si ya
+  // se habia matado), que es lo que rompia la reproduccion.
+  const match = req.headers.range ? /^bytes=(\d*)-(\d*)$/.exec(req.headers.range) : null
+  const startAt = match && match[1] ? Number(match[1]) : 0
+  const limit = match && match[2] ? Number(match[2]) + 1 : Infinity
+
+  if (!Number.isFinite(startAt) || startAt < session.start) {
+    // Ya no se conservan esos bytes (pausa muy larga): que el reproductor
+    // reinicie la conversion en el segundo actual.
+    res.writeHead(410).end('La conversión ya no conserva ese fragmento')
+    return
+  }
+  if (startAt > 0) {
+    console.info(`[SquizanTV] conversión reanudada en el byte ${startAt}`)
+  }
+
   session.res?.destroy()
   session.res = res
+  session.sent = startAt
+  session.limit = limit
+  session.blocked = false
   if (session.idle) {
     clearTimeout(session.idle)
     session.idle = null
@@ -240,34 +371,36 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): voi
     'Access-Control-Allow-Origin': '*',
   })
 
-  if (out.readableEnded || session.proc.exitCode !== null) {
-    res.end()
-    return
-  }
-
-  out.unpipe()
-  out.pipe(res)
-
   res.on('close', () => {
-    try {
-      out.unpipe(res)
-    } catch {
-      /* el proceso ya no existe */
-    }
-    if (session.res === res) session.res = null
-    if (!session.res && session.proc.exitCode === null && !session.idle) {
-      // Si nadie reconecta en 3 s (cambio de canal, salto en el tiempo, cierre
-      // del reproductor), matamos el ffmpeg para no gastar CPU ni red.
-      session.idle = setTimeout(() => killSession(session.id), 3000)
-    }
+    if (session.res !== res) return
+    session.res = null
+    session.sent = session.end
+    session.limit = Infinity
+    session.blocked = false
+    out.pause()
+    scheduleIdleKill(session)
   })
+  res.on('drain', () => {
+    if (session.res !== res) return
+    session.blocked = false
+    flushSession(session)
+    if (!session.blocked && session.res === res) out.resume()
+  })
+
+  flushSession(session)
+  if (!session.blocked && session.res === res) out.resume()
 }
 
-function killSession(id: string): void {
-  const session = sessions.get(id)
-  if (!session) return
-  sessions.delete(id)
+function killSession(session: TranscodeSession): void {
+  if (!sessions.has(session.id)) return
+  sessions.delete(session.id)
   if (session.idle) clearTimeout(session.idle)
+  session.chunks = []
+  try {
+    session.res?.destroy()
+  } catch {
+    /* ya cerrada */
+  }
   try {
     session.proc.kill()
   } catch {
@@ -277,9 +410,10 @@ function killSession(id: string): void {
 
 /**
  * Convierte un stream/fichero (por ejemplo un vídeo de un torrent servido por
- * el servidor local) en MPEG-TS en vivo con audio AAC. Vídeo copiado si es
- * decodificable, H.264 si no. El ritmo lo marca el consumidor (-re), como una
- * emisión en directo: sin saltos de tiempo, pero con sonido garantizado.
+ * el servidor local) en MPEG-TS con audio AAC. Vídeo copiado si es
+ * decodificable, H.264 si no. Se produce tan rápido como el reproductor
+ * consuma; si mpegts.js corta la conexión al llenar su búfer, la conversión se
+ * mantiene viva y se reanuda por el byte exacto que pide al reconectar.
  */
 export async function transcodeStream(srcUrl: string, fullTranscode = false, startSeconds = 0): Promise<TranscodeResult> {
   const port = await ensureServer()
@@ -331,20 +465,65 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false, sta
     return { ok: false, reason: error instanceof Error ? error.message : String(error) }
   }
 
-  const session: TranscodeSession = { id, proc, res: null, idle: null, stderrTail: '', exited: false }
+  const session: TranscodeSession = {
+    id,
+    srcUrl,
+    proc,
+    res: null,
+    idle: null,
+    stderrTail: '',
+    exited: false,
+    chunks: [],
+    start: 0,
+    end: 0,
+    sent: 0,
+    limit: Infinity,
+    blocked: false,
+  }
   sessions.set(id, session)
+
   proc.stderr?.on('data', (chunk: Buffer) => {
     session.stderrTail = (session.stderrTail + chunk.toString()).slice(-2000)
   })
-  proc.stdout?.on('error', () => undefined)
+
+  const out = proc.stdout
+  if (!out) {
+    killSession(session)
+    return { ok: false, reason: 'ffmpeg no produce salida' }
+  }
+  out.on('error', () => undefined)
+
+  // Se lee siempre la salida de ffmpeg y se guarda en la retencion: asi una
+  // reconexion de mpegts puede continuar exactamente por el byte que pide.
+  let markStarted: (() => void) | null = null
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
+  out.on('data', (chunk: Buffer) => {
+    if (markStarted) {
+      markStarted()
+      markStarted = null
+    }
+    session.chunks.push(chunk)
+    session.end += chunk.length
+    trimRetention(session)
+    flushSession(session)
+  })
+
   proc.on('close', (code) => {
     session.exited = true
     if (session.idle) {
       clearTimeout(session.idle)
       session.idle = null
     }
-    if (session.res && !session.res.destroyed) {
-      session.res.end()
+    const res = session.res
+    if (res && !res.destroyed) {
+      // Ultimo tramo: se vacia la retencion y se cierra la respuesta para que
+      // mpegts marque el final de la pelicula.
+      session.blocked = false
+      session.sent = Math.min(session.sent, session.end)
+      for (const piece of readRange(session, session.sent, session.end)) res.write(piece)
+      res.end()
       session.res = null
     }
     sessions.delete(id)
@@ -363,20 +542,16 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false, sta
       settled = true
       clearTimeout(wait)
       proc.removeListener('close', onClose)
-      proc.stdout?.removeListener('readable', onData)
       resolve(value)
     }
-    const onData = () => done(null)
     const onClose = (code: number | null) =>
       done(code === null ? null : session.stderrTail.slice(-300) || `ffmpeg salió con código ${code}`)
     const wait = setTimeout(() => done(null), 1200)
-    // `readable` deja los datos en el búfer. Con `data` el stream pasaría a
-    // modo flowing y se perderían los bloques anteriores a la petición HTTP.
-    proc.stdout?.once('readable', onData)
+    void started.then(() => done(null))
     proc.once('close', onClose)
   })
   if (earlyExit !== null) {
-    sessions.delete(id)
+    killSession(session)
     return { ok: false, reason: earlyExit }
   }
 
@@ -385,7 +560,7 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false, sta
 
 /** Mata todas las conversiones activas (al cerrar la app). */
 export function disposeTranscodes(): void {
-  for (const id of [...sessions.keys()]) killSession(id)
+  for (const session of [...sessions.values()]) killSession(session)
   if (server) {
     server.close()
     server = null

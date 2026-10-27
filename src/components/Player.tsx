@@ -512,6 +512,11 @@ export function Player({
     let mpeg: ReturnType<typeof mpegts.createPlayer> | null = null
     let fallbackUsed = false
     let fullRetryStarted = false
+    /** Reenganche en curso: evita dos conversiones a la vez. */
+    let recovering = false
+    let recoveries: number[] = []
+    /** Numero de cambio de flujo; invalida resultados de un cambio anterior. */
+    let switchSeq = 0
 
     seekOffsetRef.current = 0
     transcodeRef.current = null
@@ -610,9 +615,17 @@ export function Player({
             setAudioIssue('La pista de audio es Dolby (AC-3), que el reproductor interno no decodifica.')
           }
         })
-        mpeg.on(mpegts.Events.ERROR, () => {
+        mpeg.on(mpegts.Events.ERROR, (type: string, detail: string, info: unknown) => {
+          // Un cambio de flujo esta en marcha: los errores del motor anterior
+          // ya no importan.
+          if (recovering) return
           if (allowFallback && tryFallback()) return
+          // La conversion puede cortarse (pausa larga, salto, red). En vez de
+          // tapar la pelicula con un aviso, se levanta otra conversion en el
+          // segundo actual y se sigue viendo.
+          if (transcodeRef.current && /network/i.test(String(type)) && recoverTranscode()) return
           if (retryFullTranscode()) return
+          console.warn('[SquizanTV] no se pudo reproducir el flujo', type, detail, info)
           fail('No se pudo reproducir este archivo. SquizanTV intentó convertirlo, pero el formato sigue sin ser compatible.')
         })
         mpeg.load()
@@ -702,6 +715,7 @@ export function Player({
       if (!isVod || fullRetryStarted) return false
       if (transcodeRef.current?.full) return false
       fullRetryStarted = true
+      recovering = true
       const at = seekOffsetRef.current + (videoRef.current?.currentTime ?? 0)
       cleanupEngines()
       setStatus('loading')
@@ -720,6 +734,52 @@ export function Player({
           startTs(trans.url, false, true)
         } catch (error) {
           if (!disposed) fail(error instanceof Error ? error.message : 'No se pudo convertir este archivo.')
+        } finally {
+          recovering = false
+        }
+      })()
+      return true
+    }
+
+    /**
+     * Reengancha una conversion cortada (mpegts cierra la conexion al llenar su
+     * bufer, o el servidor mata una sesion tras una pausa larga). No muestra el
+     * aviso de error: levanta otra conversion desde el segundo actual y cambia
+     * a ella en cuanto hay datos.
+     *
+     * Se limita a 4 intentos cada 2 minutos para no entrar en un bucle si el
+     * archivo esta realmente roto.
+     */
+    function recoverTranscode(): boolean {
+      const info = transcodeRef.current
+      if (disposed || !info || recovering) return false
+      const now = Date.now()
+      recoveries = recoveries.filter((time) => now - time < 120_000)
+      if (recoveries.length >= 4) return false
+      recoveries.push(now)
+      recovering = true
+      const seq = ++switchSeq
+      const at = seekOffsetRef.current + (videoRef.current?.currentTime ?? 0)
+      setLoadNote('Reconectando el vídeo…')
+      void (async () => {
+        try {
+          const trans = await window.nova.media.transcodeStream(channel.url, info.full, at)
+          if (disposed || seq !== switchSeq) return
+          if (!trans?.ok || !trans.url) {
+            fail(trans?.reason || 'No se pudo reconectar la conversión del vídeo.')
+            return
+          }
+          cleanupEngines()
+          seekOffsetRef.current = at
+          transcodeRef.current = { full: info.full }
+          setLoadNote('')
+          startTs(trans.url, false, true)
+        } catch (error) {
+          if (!disposed && seq === switchSeq) {
+            fail(error instanceof Error ? error.message : 'No se pudo reconectar la conversión del vídeo.')
+          }
+        } finally {
+          if (seq === switchSeq) recovering = false
         }
       })()
       return true
@@ -733,12 +793,14 @@ export function Player({
     const restartTranscodeAt = async (seconds: number) => {
       const info = transcodeRef.current
       if (disposed || !info) return
+      recovering = true
+      const seq = ++switchSeq
       setStatus('loading')
       setLoadNote(`Saltando a ${clock(seconds)}…`)
       setCurrentTime(seconds)
       try {
         const trans = await window.nova.media.transcodeStream(channel.url, info.full, seconds)
-        if (disposed) return
+        if (disposed || seq !== switchSeq) return
         if (!trans?.ok || !trans.url) {
           fail(trans?.reason || 'No se pudo saltar a ese punto del vídeo.')
           return
@@ -749,7 +811,11 @@ export function Player({
         setLoadNote('')
         startTs(trans.url, false, true)
       } catch (error) {
-        if (!disposed) fail(error instanceof Error ? error.message : 'No se pudo saltar a ese punto del vídeo.')
+        if (!disposed && seq === switchSeq) {
+          fail(error instanceof Error ? error.message : 'No se pudo saltar a ese punto del vídeo.')
+        }
+      } finally {
+        if (seq === switchSeq) recovering = false
       }
     }
     seekRestartRef.current = (seconds) => {
@@ -777,7 +843,9 @@ export function Player({
       setStatus('playing')
     }
     const onVideoError = () => {
+      if (recovering) return
       if (video.error && tryFallback()) return
+      if (video.error && transcodeRef.current && recoverTranscode()) return
       if (video.error && retryFullTranscode()) return
       if (video.error) fail('El reproductor no pudo abrir este archivo. Puede estar dañado o usar un formato que Chromium no admite.')
     }
