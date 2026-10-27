@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Channel, Playlist } from '../types'
-import { parseM3U } from '../lib/m3u'
+import { parseM3U, parseEpgUrls } from '../lib/m3u'
 import { fetchXtream, normalizeServer } from '../lib/xtream'
 import { hostOf, uid, sanitizeName } from '../lib/util'
 import { Icon } from './Icons'
@@ -46,6 +46,11 @@ export function AddPlaylistModal({ onClose, onAdded }: AddPlaylistModalProps) {
     if (!picked) return
     setFile(picked)
     if (!name) setName(picked.name.replace(/\.(m3u8?|txt)$/i, ''))
+    // La guía suele venir en el encabezado #EXTM3U: se muestra ya rellenada.
+    if (!epgUrl.trim()) {
+      const parsed = parseM3U(picked.content)
+      if (parsed.epgUrls.length > 0) setEpgUrl(parsed.epgUrls.join(', '))
+    }
     setError('')
   }
 
@@ -82,12 +87,16 @@ export function AddPlaylistModal({ onClose, onAdded }: AddPlaylistModalProps) {
           throw new Error('La lista no contiene canales validos. Revisa que sea un M3U con enlaces http.')
         }
 
+        const manualEpg = parseEpgUrls(epgUrl)
+        const epgSources = manualEpg.length > 0 ? manualEpg : parsed.epgUrls
         playlist = {
           id: uid(),
           name: sanitizeName(name) || (file ? file.name : nameFromUrl(source)),
           type: 'm3u',
           source,
-          epgUrl: epgUrl.trim() || parsed.epgUrl,
+          epgUrl: epgSources[0],
+          epgUrls: epgSources.length > 0 ? epgSources : undefined,
+          epgRefresh: parsed.epgRefresh,
           channels: parsed.channels,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -114,6 +123,7 @@ export function AddPlaylistModal({ onClose, onAdded }: AddPlaylistModalProps) {
           source: creds.server,
           xtream: creds,
           epgUrl: result.epgUrl,
+          epgUrls: result.epgUrl ? [result.epgUrl] : undefined,
           channels,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -213,11 +223,18 @@ export function AddPlaylistModal({ onClose, onAdded }: AddPlaylistModalProps) {
                 <input
                   value={epgUrl}
                   onChange={(event) => setEpgUrl(event.target.value)}
-                  placeholder="https://ejemplo.com/epg.xml"
+                  placeholder="Se detecta solo desde #EXTM3U url-tvg"
                   disabled={busy}
                   spellCheck={false}
                 />
               </label>
+              {parseEpgUrls(epgUrl).length > 0 && (
+                <p className="field-hint">
+                  {parseEpgUrls(epgUrl).length === 1
+                    ? 'Guía detectada en la lista.'
+                    : `${parseEpgUrls(epgUrl).length} guías detectadas en la lista; se combinarán.`}
+                </p>
+              )}
             </>
           ) : (
             <>

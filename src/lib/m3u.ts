@@ -3,7 +3,44 @@ import { hashString, isTransportStream } from './util'
 
 export interface M3uParseResult {
   channels: Channel[]
+  /** Primera fuente de EPG, por compatibilidad. */
   epgUrl?: string
+  /** Todas las fuentes declaradas en el encabezado `url-tvg`. */
+  epgUrls: string[]
+  /** Segundos entre actualizaciones que pide la lista (`refresh`). */
+  epgRefresh?: number
+}
+
+/**
+ * Separa y limpia las URLs de EPG. El encabezado `#EXTM3U url-tvg="a,b,c"`
+ * admite varias fuentes separadas por comas, y algunos proveedores usan
+ * `x-tvg-url`, `tvg-url` o `x-tvg`.
+ */
+export function parseEpgUrls(value: string | undefined, target: string[] = []): string[] {
+  if (!value) return target
+  for (const part of value.split(/[,\n]/)) {
+    const url = canonicalEpgUrl(part.trim())
+    if (!/^https?:\/\//i.test(url)) continue
+    if (!target.includes(url)) target.push(url)
+  }
+  return target
+}
+
+/**
+ * `raw.githubusercontent.com/usuario/repo/refs/heads/rama/...` y
+ * `.../usuario/repo/rama/...` son el mismo archivo. Se unifican para no
+ * descargar dos veces una guía de 35 MB.
+ */
+function canonicalEpgUrl(url: string): string {
+  return url.replace(/^(https?:\/\/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/)refs\/heads\//i, '$1')
+}
+
+/** Fuentes de EPG de una lista ya guardada (incluye listas antiguas). */
+export function playlistEpgUrls(playlist: { epgUrls?: string[]; epgUrl?: string }): string[] {
+  const urls = parseEpgUrls(undefined, [])
+  for (const url of playlist.epgUrls ?? []) parseEpgUrls(url, urls)
+  parseEpgUrls(playlist.epgUrl, urls)
+  return urls
 }
 
 function parseAttributes(meta: string): Record<string, string> {
@@ -42,7 +79,8 @@ export function parseM3U(text: string, hintedKind?: ChannelKind): M3uParseResult
   const lines = text.split(/\r?\n/)
   const channels: Channel[] = []
   let pending: { name: string; attrs: Record<string, string>; group?: string } | null = null
-  let epgUrl: string | undefined
+  const epgUrls: string[] = []
+  let epgRefresh: number | undefined
 
   for (const rawLine of lines) {
     const line = rawLine.trim()
@@ -50,7 +88,9 @@ export function parseM3U(text: string, hintedKind?: ChannelKind): M3uParseResult
 
     if (line.startsWith('#EXTM3U')) {
       const attrs = parseAttributes(line)
-      epgUrl = attrs['url-tvg'] || attrs['x-tvg-url'] || attrs['tvg-url'] || attrs['x-tvg'] || epgUrl
+      for (const key of ['url-tvg', 'x-tvg-url', 'tvg-url', 'x-tvg']) parseEpgUrls(attrs[key], epgUrls)
+      const refresh = Number(attrs['refresh'])
+      if (Number.isFinite(refresh) && refresh > 0) epgRefresh = refresh
       continue
     }
 
@@ -100,7 +140,7 @@ export function parseM3U(text: string, hintedKind?: ChannelKind): M3uParseResult
     pending = null
   }
 
-  return { channels, epgUrl }
+  return { channels, epgUrl: epgUrls[0], epgUrls, epgRefresh }
 }
 
 export function buildM3U(channels: Channel[]): string {

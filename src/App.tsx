@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Channel, EpgData, PageId, Playlist, TorrentDetails, TorrentFileInfo, TorrentSnapshot } from './types'
 import { useDb } from './store'
-import { parseXmltv } from './lib/xmltv'
-import { baseName, formatSpeed, uid } from './lib/util'
+import { parseXmltv, mergeEpg } from './lib/xmltv'
+import { playlistEpgUrls } from './lib/m3u'
+import { baseName, formatSpeed, hostOf, uid } from './lib/util'
 import { Sidebar } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { Player } from './components/Player'
@@ -48,45 +49,90 @@ export default function App() {
   const [epgLoading, setEpgLoading] = useState(false)
   const [epgError, setEpgError] = useState('')
   const [torrentStatus, setTorrentStatus] = useState('')
-  const epgCache = useRef<{ url: string; data: EpgData } | null>(null)
+  const epgCache = useRef<{ key: string; data: EpgData } | null>(null)
 
   const playlist = activePlaylist
+  const epgSources = useMemo(() => (playlist ? playlistEpgUrls(playlist) : []), [playlist])
+  const epgRefresh = playlist?.epgRefresh ?? 3600
 
   const loadEpg = useCallback(
     async (force = false) => {
-      const url = playlist?.epgUrl
-      if (!url) {
+      const urls = epgSources
+      if (urls.length === 0) {
         setEpg(null)
         setEpgError('')
         return
       }
-      if (!force && epgCache.current?.url === url) {
+      const key = urls.join('\n')
+      if (!force && epgCache.current?.key === key) {
         setEpg(epgCache.current.data)
         return
       }
       setEpgLoading(true)
       setEpgError('')
       try {
-        const response = await window.nova.net.fetch({ url, timeout: 120000 })
-        if (!response.ok) throw new Error(`No se pudo descargar el EPG (HTTP ${response.status}).`)
-        if (!response.text.trim()) throw new Error('El servidor devolvio un EPG vacio.')
-        const data = parseXmltv(response.text, url)
-        if (data.programmes.length === 0) throw new Error('El XMLTV no contiene programas legibles.')
-        epgCache.current = { url, data }
-        setEpg(data)
+        // Una lista puede declarar varias fuentes (por ejemplo una general y
+        // otra por país). Se descargan en paralelo y se unen; si una falla, se
+        // usa el resto. La copia en disco evita bajar 35 MB en cada arranque.
+        const results = await Promise.allSettled(
+          urls.map((url) =>
+            window.nova.net.fetch({
+              url,
+              timeout: 180000,
+              cacheSeconds: force ? 0 : Math.max(60, epgRefresh),
+            }),
+          ),
+        )
+        const parts: EpgData[] = []
+        const failures: string[] = []
+        results.forEach((result, position) => {
+          const url = urls[position]
+          if (result.status !== 'fulfilled') {
+            failures.push(`${hostOf(url)} (${result.reason instanceof Error ? result.reason.message : 'sin conexión'})`)
+            return
+          }
+          const response = result.value
+          if (!response.ok) {
+            failures.push(`${hostOf(url)} (HTTP ${response.status})`)
+            return
+          }
+          if (!response.text.trim()) {
+            failures.push(`${hostOf(url)} (vacío)`)
+            return
+          }
+          try {
+            const data = parseXmltv(response.text, url)
+            if (data.programmes.length === 0) {
+              failures.push(`${hostOf(url)} (sin programas)`)
+              return
+            }
+            parts.push(data)
+          } catch (cause) {
+            failures.push(`${hostOf(url)} (${cause instanceof Error ? cause.message : 'XMLTV no válido'})`)
+          }
+        })
+        if (parts.length === 0) {
+          throw new Error(
+            failures.length > 0 ? `No se pudo cargar el EPG: ${failures.join(' · ')}` : 'El EPG está vacío.',
+          )
+        }
+        const merged = mergeEpg(parts, urls.join(', '))
+        epgCache.current = { key, data: merged }
+        setEpg(merged)
+        if (failures.length > 0) setEpgError(`Algunas fuentes del EPG fallaron: ${failures.join(' · ')}`)
       } catch (cause) {
         setEpgError(cause instanceof Error ? cause.message : 'Error al cargar el EPG.')
-        if (epgCache.current?.url === url) setEpg(epgCache.current.data)
+        if (epgCache.current?.key === key) setEpg(epgCache.current.data)
         else setEpg(null)
       } finally {
         setEpgLoading(false)
       }
     },
-    [playlist?.epgUrl],
+    [epgSources, epgRefresh],
   )
 
   useEffect(() => {
-    if (!playlist?.epgUrl) {
+    if (epgSources.length === 0) {
       setEpg(null)
       setEpgError('')
       return
@@ -94,7 +140,15 @@ export default function App() {
     if (!db.settings.epgAutoRefresh) return
     void loadEpg()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playlist?.id, playlist?.epgUrl, db.settings.epgAutoRefresh])
+  }, [playlist?.id, epgSources, db.settings.epgAutoRefresh])
+
+  // Las listas indican cada cuánto cambia su guía (`refresh`, normalmente 1 h).
+  useEffect(() => {
+    if (epgSources.length === 0 || !db.settings.epgAutoRefresh) return
+    const every = Math.max(900, epgRefresh) * 1000
+    const timer = setInterval(() => void loadEpg(true), every)
+    return () => clearInterval(timer)
+  }, [epgSources, epgRefresh, db.settings.epgAutoRefresh, loadEpg])
 
   const navigate = useCallback((next: PageId) => {
     setPage(next)

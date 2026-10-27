@@ -17,10 +17,10 @@ Reproductor de escritorio para Windows con IPTV (M3U y Xtream Codes), EPG, pelí
 Entra en **[Releases](https://github.com/SquizanTech/NovaTV/releases)** y descarga el archivo más reciente:
 
 ```
-SquizanTV-Setup-0.5.3.exe
+SquizanTV-Setup-0.5.4.exe
 ```
 
-También puedes usar la versión portable `SquizanTV-Portable-0.5.3.exe` si no quieres instalar nada.
+También puedes usar la versión portable `SquizanTV-Portable-0.5.4.exe` si no quieres instalar nada.
 
 ### 2. Ejecuta el instalador
 
@@ -37,7 +37,7 @@ También puedes usar la versión portable `SquizanTV-Portable-0.5.3.exe` si no q
 
 1. Abre **Mis listas → Añadir lista**.
 2. Pega la URL de tu lista M3U/M3U8 o los datos de tu cuenta Xtream Codes (servidor, usuario y contraseña).
-3. Espera a que se lean los canales. El EPG se descarga solo si la lista lo incluye.
+3. Espera a que se lean los canales. El EPG se descarga solo si la lista lo incluye: se lee de su encabezado `#EXTM3U url-tvg="…"`, sin escribir ninguna URL a mano.
 4. Usa **Directo**, **Películas**, **Series**, **EPG**, **Favoritos** e **Historial** desde la barra lateral.
 
 **Para reproducir un torrent:**
@@ -60,6 +60,7 @@ SquizanTV solo reproduce las fuentes que tú configures. No incluye listas, cana
 
 - Ajustes, listas, favoritos e historial: `%APPDATA%\SquizanTV\squizantv.json`
 - Caché de torrents: `%TEMP%\SquizanTV\torrents`
+- Caché de guías EPG: `%APPDATA%\SquizanTV\http-cache`
 - Si vienes de la versión anterior (NovaTV), la app copia automáticamente tus datos la primera vez que arranca.
 
 ---
@@ -98,7 +99,7 @@ npm run dist
 
 Genera en `release/`:
 
-- `SquizanTV-Setup-0.5.3.exe`: instalador NSIS.
+- `SquizanTV-Setup-0.5.4.exe`: instalador NSIS.
 - `latest.yml` y el `.blockmap`: necesarios para las actualizaciones.
 - `win-unpacked/`: versión sin instalar para probar.
 
@@ -155,6 +156,20 @@ El renderer nunca accede a Node directamente: todo pasa por `window.nova` con `c
 9. Para saltar en el tiempo en una conversión, se reinicia ffmpeg con `-ss` en el minuto elegido y se reengancha el reproductor; en archivos compatibles el salto es nativo.
 10. La conversión no usa `-re`: produce datos tan rápido como el reproductor los consume. mpegts.js mantiene unos 60 s de búfer por delante, así que el primer fotograma llega en menos de un segundo sin descargar la película entera de golpe.
 11. Cuando mpegts.js llena su búfer corta la conexión y la reabre después con `Range: bytes=N-`. El servidor de conversión mantiene viva la sesión 90 s y conserva los últimos 24 MB del flujo, de modo que responde con el byte exacto que pide el reproductor y la película continúa sin errores ni avisos. Si aun así se corta, el reproductor levanta otra conversión en el segundo actual de forma silenciosa.
+
+### Guía de programación (EPG)
+
+SquizanTV lee la guía directamente de la lista, igual que hace IPTVnator, sin pedirte que pegues ninguna URL:
+
+1. Al añadir una lista, se leen los atributos `url-tvg`, `x-tvg-url`, `tvg-url` o `x-tvg` del encabezado `#EXTM3U`. La URL detectada aparece ya rellenada en el formulario y se guarda con la lista.
+2. Si el encabezado declara varias guías separadas por comas, se descargan todas en paralelo y se unen en una sola parrilla. Si dos rutas apuntan al mismo archivo (por ejemplo con y sin `refs/heads/`), se descarga una sola vez.
+3. Los programas repetidos entre fuentes (mismo canal y misma hora) se descartan, y cada canal conserva todas las horas disponibles al fusionar.
+4. El emparejamiento se hace primero por `tvg-id` y, si no coincide, por nombre de canal normalizado: se ignoran acentos, prefijos de país, marcas de calidad (`HD`, `1080p`, `[HD]`…) y sufijos como `TVE`.
+5. El campo `refresh` del encabezado indica cada cuánto cambia la guía (normalmente 3600 s). La app la actualiza sola con ese intervalo mientras está abierta; el mínimo es de 15 minutos.
+6. Las guías grandes se guardan en `%APPDATA%\SquizanTV\http-cache` y se reutilizan durante ese intervalo, de modo que abrir la app no vuelve a descargar 35 MB. **Actualizar** en la página del EPG fuerza una descarga nueva.
+7. Si una de las fuentes falla, se usa el resto y se avisa cuál no respondió; si todas fallan, se mantiene la última guía cargada en memoria.
+
+Las listas antiguas que guardaban todo el encabezado (`a.xml,b.xml`) como una sola URL se corrigen automáticamente al arrancar la app.
 
 ### Reproductor
 

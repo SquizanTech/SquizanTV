@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { gunzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { disposeTorrents, registerTorrentIpc } from './torrent'
@@ -128,13 +129,39 @@ function registerIpc(): void {
     'net:fetch',
     async (
       _event,
-      req: { url: string; method?: string; headers?: Record<string, string>; body?: string; timeout?: number },
+      req: {
+        url: string
+        method?: string
+        headers?: Record<string, string>
+        body?: string
+        timeout?: number
+        cacheSeconds?: number
+      },
     ) => {
+      const method = req.method ?? 'GET'
+      const cacheSeconds = Number(req.cacheSeconds) || 0
+      let cacheFile: string | null = null
+      if (cacheSeconds > 0 && method === 'GET') {
+        const key = createHash('sha1').update(req.url).digest('hex')
+        cacheFile = path.join(dataDir, 'http-cache', `${key}.txt`)
+        try {
+          const stats = await fs.stat(cacheFile)
+          if (Date.now() - stats.mtimeMs < cacheSeconds * 1000) {
+            const text = await fs.readFile(cacheFile, 'utf8')
+            if (text.trim()) {
+              return { ok: true, status: 200, statusText: 'OK (caché)', text, contentType: '' }
+            }
+          }
+        } catch {
+          /* sin copia guardada */
+        }
+      }
+
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), req.timeout ?? 30000)
       try {
         const res = await fetch(req.url, {
-          method: req.method ?? 'GET',
+          method,
           headers: req.headers,
           body: req.body,
           redirect: 'follow',
@@ -147,6 +174,22 @@ function registerIpc(): void {
         }
         let text = buffer.toString('utf8')
         if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+        // Las guías grandes (35 MB) se guardan para no descargarlas en cada
+        // arranque; se escriben en un temporal y se renombran para que una
+        // lectura simultánea nunca vea un archivo a medias.
+        if (cacheFile && res.ok && text.trim()) {
+          const target = cacheFile
+          void (async () => {
+            try {
+              await fs.mkdir(path.dirname(target), { recursive: true })
+              const temp = `${target}.${process.pid}.tmp`
+              await fs.writeFile(temp, text, 'utf8')
+              await fs.rename(temp, target)
+            } catch {
+              /* la caché es opcional */
+            }
+          })()
+        }
         return {
           ok: res.ok,
           status: res.status,

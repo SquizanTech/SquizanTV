@@ -46,7 +46,12 @@ export interface Playlist {
   type: 'm3u' | 'xtream'
   source?: string
   xtream?: XtreamCreds
+  /** Primera fuente de EPG (compatibilidad con versiones anteriores). */
   epgUrl?: string
+  /** Fuentes de EPG declaradas por la lista (`url-tvg`). */
+  epgUrls?: string[]
+  /** Segundos entre actualizaciones (`refresh` del encabezado M3U). */
+  epgRefresh?: number
   channels: Channel[]
   createdAt: number
   updatedAt: number

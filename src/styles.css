@@ -2104,6 +2104,12 @@ input {
   opacity: 0.55;
 }
 
+.field-hint {
+  margin: -2px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

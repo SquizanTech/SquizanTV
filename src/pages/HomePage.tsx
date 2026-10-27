@@ -39,12 +39,12 @@ export function HomePage({ playlist, epg, onAdd, onNavigate, onPlay }: HomePageP
   const liveNow = useMemo(() => {
     if (!playlist) return []
     const live = playlist.channels.filter((channel) => channel.kind === 'live')
-    const withEpg = live.filter((channel) => programAt(epg?.byChannel[epgIdFor(channel.tvgId, epg) ?? ''] ?? [], Date.now()))
+    const withEpg = live.filter((channel) => programAt(epg?.byChannel[epgIdFor(channel.tvgId, epg, channel.name) ?? ''] ?? [], Date.now()))
     return (withEpg.length > 0 ? withEpg : live).slice(0, 8)
   }, [playlist, epg])
 
   const nowFor = (channel: Channel) =>
-    programAt(epg?.byChannel[epgIdFor(channel.tvgId, epg) ?? ''] ?? [], Date.now())?.title
+    programAt(epg?.byChannel[epgIdFor(channel.tvgId, epg, channel.name) ?? ''] ?? [], Date.now())?.title
 
   return (
     <div className="page home">

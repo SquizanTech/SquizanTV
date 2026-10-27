@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Channel, EpgData, Playlist } from '../types'
 import { epgIdFor } from '../lib/xmltv'
+import { playlistEpgUrls } from '../lib/m3u'
 import { formatTime } from '../lib/util'
 import { EmptyState } from '../components/EmptyState'
 import { Icon } from '../components/Icons'
@@ -40,7 +41,7 @@ export function EpgPage({ playlist, epg, loading, error, query, onReload, onPlay
     if (!playlist || !epg) return []
     const needle = query.trim().toLowerCase()
     return playlist.channels
-      .filter((channel) => channel.kind === 'live' && epgIdFor(channel.tvgId, epg))
+      .filter((channel) => channel.kind === 'live' && epgIdFor(channel.tvgId, epg, channel.name))
       .filter((channel) => {
         if (!needle) return true
         return channel.name.toLowerCase().includes(needle) || (channel.group ?? '').toLowerCase().includes(needle)
@@ -58,13 +59,13 @@ export function EpgPage({ playlist, epg, loading, error, query, onReload, onPlay
     )
   }
 
-  if (!playlist.epgUrl) {
+  if (playlistEpgUrls(playlist).length === 0) {
     return (
       <div className="page">
         <EmptyState
           icon="calendar"
           title="Esta lista no tiene EPG"
-          description="Añade la URL del XMLTV en Mis listas, o usa una cuenta Xtream Codes (incluye xmltv.php automáticamente)."
+          description="La lista no declara ninguna guía en su encabezado. Puedes añadir la URL del XMLTV en Mis listas, o usar una cuenta Xtream Codes (incluye xmltv.php automáticamente)."
         />
       </div>
     )
@@ -134,7 +135,7 @@ export function EpgPage({ playlist, epg, loading, error, query, onReload, onPlay
         <EmptyState
           icon="search"
           title="Sin coincidencias"
-          description="Ningún canal de la lista coincide con los identificadores del XMLTV (tvg-id)."
+          description="Ningún canal de la lista coincide con la guía: ni por tvg-id ni por nombre."
         />
       ) : (
         <div className="epg-scroll">
@@ -156,7 +157,7 @@ export function EpgPage({ playlist, epg, loading, error, query, onReload, onPlay
             </div>
 
             {visible.map((channel) => {
-              const id = epgIdFor(channel.tvgId, epg)
+              const id = epgIdFor(channel.tvgId, epg, channel.name)
               const programmes = id ? epg.byChannel[id] ?? [] : []
               return (
                 <div className="epg-row" key={channel.id}>

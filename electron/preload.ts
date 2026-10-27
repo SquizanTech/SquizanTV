@@ -7,6 +7,8 @@ export type FetchRequest = {
   headers?: Record<string, string>
   body?: string
   timeout?: number
+  /** Reutiliza la respuesta guardada en disco si tiene menos de estos segundos. */
+  cacheSeconds?: number
 }
 
 const api = {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Playlist } from '../types'
 import { useDb } from '../store'
-import { parseM3U } from '../lib/m3u'
+import { parseM3U, parseEpgUrls, playlistEpgUrls } from '../lib/m3u'
 import { fetchXtream } from '../lib/xtream'
 import { hostOf } from '../lib/util'
 import { Icon } from '../components/Icons'
@@ -24,7 +24,11 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
     try {
       if (playlist.type === 'xtream' && playlist.xtream) {
         const result = await fetchXtream(playlist.xtream)
-        updatePlaylist(playlist.id, { channels: result.channels, epgUrl: result.epgUrl })
+        updatePlaylist(playlist.id, {
+          channels: result.channels,
+          epgUrl: result.epgUrl,
+          epgUrls: result.epgUrl ? [result.epgUrl] : undefined,
+        })
         setNotice({ id: playlist.id, type: 'ok', text: `${result.channels.length} elementos actualizados.` })
       } else if (playlist.source && /^https?:\/\//i.test(playlist.source)) {
         const response = await window.nova.net.fetch({ url: playlist.source, timeout: 45000 })
@@ -33,7 +37,9 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
         if (parsed.channels.length === 0) throw new Error('La lista no contiene canales validos.')
         updatePlaylist(playlist.id, {
           channels: parsed.channels,
-          epgUrl: parsed.epgUrl || playlist.epgUrl,
+          epgUrl: parsed.epgUrls[0] || playlist.epgUrl,
+          epgUrls: parsed.epgUrls.length > 0 ? parsed.epgUrls : playlistEpgUrls(playlist),
+          epgRefresh: parsed.epgRefresh ?? playlist.epgRefresh,
         })
         setNotice({ id: playlist.id, type: 'ok', text: `${parsed.channels.length} canales actualizados.` })
       } else {
@@ -45,7 +51,9 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
           channels: parsed.channels,
           source: picked.path,
           name: playlist.name,
-          epgUrl: parsed.epgUrl || playlist.epgUrl,
+          epgUrl: parsed.epgUrls[0] || playlist.epgUrl,
+          epgUrls: parsed.epgUrls.length > 0 ? parsed.epgUrls : playlistEpgUrls(playlist),
+          epgRefresh: parsed.epgRefresh ?? playlist.epgRefresh,
         })
         setNotice({ id: playlist.id, type: 'ok', text: `${parsed.channels.length} canales actualizados.` })
       }
@@ -129,14 +137,18 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
                 <div className="playlist-epg">
                   <span>
                     <Icon name="calendar" size={14} /> EPG:{' '}
-                    {playlist.epgUrl ? 'configurado' : 'no configurado'}
+                    {(() => {
+                      const count = playlistEpgUrls(playlist).length
+                      if (count === 0) return 'no configurado'
+                      return count === 1 ? 'configurado' : `${count} fuentes`
+                    })()}
                   </span>
                   {editingEpg === playlist.id ? (
                     <div className="epg-edit">
                       <input
                         value={epgDraft}
                         onChange={(event) => setEpgDraft(event.target.value)}
-                        placeholder="https://.../epg.xml"
+                        placeholder="https://.../epg.xml, https://.../otra.xml"
                         autoFocus
                       />
                       <button
@@ -144,7 +156,11 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
                         className="icon-btn"
                         title="Guardar"
                         onClick={() => {
-                          updatePlaylist(playlist.id, { epgUrl: epgDraft.trim() || undefined })
+                          const urls = parseEpgUrls(epgDraft)
+                          updatePlaylist(playlist.id, {
+                            epgUrl: urls[0],
+                            epgUrls: urls.length > 0 ? urls : undefined,
+                          })
                           setEditingEpg(null)
                         }}
                       >
@@ -157,7 +173,7 @@ export function PlaylistsPage({ onAdd }: PlaylistsPageProps) {
                       className="link-btn"
                       onClick={() => {
                         setEditingEpg(playlist.id)
-                        setEpgDraft(playlist.epgUrl ?? '')
+                        setEpgDraft(playlistEpgUrls(playlist).join(', '))
                       }}
                     >
                       Editar

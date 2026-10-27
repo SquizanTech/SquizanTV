@@ -200,7 +200,7 @@ export function Player({
 
   const favorite = isFavorite(playlist.id, channel.id)
 
-  const epgId = epgIdFor(channel.tvgId, epg)
+  const epgId = epgIdFor(channel.tvgId, epg, channel.name)
   const programmes = epgId ? epg?.byChannel[epgId] : undefined
   const now = programAt(programmes, Date.now())
   const upcoming = nextPrograms(programmes, Date.now(), 4).filter((item) => item.start > Date.now())

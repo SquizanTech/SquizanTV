@@ -49,7 +49,11 @@ export function parseXmltv(text: string, source: string): EpgData {
     const record = node as Record<string, unknown>
     const id = String(record['@_id'] ?? '')
     if (!id) continue
-    channels[id] = textOf(record['display-name']) || id
+    // Todas las variantes del nombre sirven para emparejar listas sin tvg-id.
+    const names = (Array.isArray(record['display-name']) ? record['display-name'] : [record['display-name']])
+      .map((value) => textOf(value))
+      .filter(Boolean)
+    channels[id] = names.length > 0 ? names.join(' | ') : id
   }
 
   const programmeNodes = Array.isArray(tv.programme) ? tv.programme : tv.programme ? [tv.programme] : []
@@ -101,10 +105,129 @@ export function nextPrograms(
   return programmes.filter((programme) => programme.stop > ts).slice(0, limit)
 }
 
-export function epgIdFor(tvgId: string | undefined, epg: EpgData | null): string | undefined {
-  if (!epg || !tvgId) return undefined
-  if (epg.byChannel[tvgId]) return tvgId
-  const lower = tvgId.toLowerCase()
-  const found = Object.keys(epg.byChannel).find((key) => key.toLowerCase() === lower)
-  return found
+export function epgIdFor(tvgId: string | undefined, epg: EpgData | null, name?: string): string | undefined {
+  if (!epg) return undefined
+  const index = epgIndex(epg)
+  if (tvgId) {
+    const exact = index.lower.get(tvgId.trim().toLowerCase())
+    if (exact) return exact
+  }
+  // Muchas listas dejan el tvg-id vacío o con un nombre distinto al del XMLTV.
+  // Se compara por nombre normalizado (sin calidad, acentos ni símbolos).
+  for (const candidate of [tvgId, name]) {
+    const key = normalizeChannelName(candidate)
+    if (!key) continue
+    const hit = index.names.get(key)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+interface EpgIndex {
+  /** id del XMLTV en minúsculas -> id real */
+  lower: Map<string, string>
+  /** nombre normalizado -> id real */
+  names: Map<string, string>
+}
+
+const indexCache = new WeakMap<EpgData, EpgIndex>()
+
+/**
+ * Palabras que solo indican calidad o códec y no forman parte del nombre del
+ * canal. Así "La 1 HD" casa con "La 1" y "DAZN F1 1080p" con "DAZN F1 HD".
+ */
+const QUALITY_WORDS = new Set([
+  'hd',
+  'fhd',
+  'uhd',
+  'sd',
+  '4k',
+  '8k',
+  '720',
+  '720p',
+  '1080',
+  '1080p',
+  '2160',
+  '2160p',
+  'h264',
+  'h265',
+  'hevc',
+  'avc',
+  'hevc10',
+  'hi10p',
+])
+
+export function normalizeChannelName(input: string | undefined): string {
+  if (!input) return ''
+  let text = input.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  // Prefijos de país habituales: "DE | Rally TV", "ES: La 1".
+  text = text.replace(/^\s*[a-z]{2,3}\s*[|:]\s*/, '')
+  // Coletillas tipo "(720p)" o "[HD]".
+  text = text.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+  text = text.replace(/[^a-z0-9]+/g, ' ')
+  const tokens = text.split(' ').filter((token) => token && !QUALITY_WORDS.has(token))
+  // "La 2 TVE" y "La 1 TVE" son la misma cadena que "La 2" / "La 1".
+  if (tokens[0] === 'la' && /^\d+$/.test(tokens[1] ?? '')) {
+    return tokens.filter((token, position) => position < 2 || token !== 'tve').join(' ')
+  }
+  return tokens.join(' ')
+}
+
+function epgIndex(epg: EpgData): EpgIndex {
+  const cached = indexCache.get(epg)
+  if (cached) return cached
+
+  const lower = new Map<string, string>()
+  const names = new Map<string, string>()
+  const addName = (value: string | undefined, id: string) => {
+    const key = normalizeChannelName(value)
+    if (!key || names.has(key)) return
+    names.set(key, id)
+  }
+
+  for (const id of Object.keys(epg.byChannel)) {
+    lower.set(id.trim().toLowerCase(), id)
+    addName(id, id)
+    for (const alias of epg.channels[id]?.split('|') ?? []) addName(alias, id)
+  }
+
+  const index = { lower, names }
+  indexCache.set(epg, index)
+  return index
+}
+
+/**
+ * Une varias fuentes XMLTV en una sola guía. Se descartan los programas
+ * repetidos (misma cadena y misma hora), algo habitual cuando una lista
+ * declara el mismo archivo con dos rutas distintas.
+ */
+export function mergeEpg(parts: EpgData[], source: string): EpgData {
+  if (parts.length === 0) {
+    return { channels: {}, programmes: [], byChannel: {}, fetchedAt: Date.now(), source }
+  }
+  if (parts.length === 1) return { ...parts[0], source }
+
+  const channels: Record<string, string> = {}
+  const byChannel: Record<string, EpgProgramme[]> = {}
+  const programmes: EpgProgramme[] = []
+  const seen = new Set<string>()
+
+  for (const part of parts) {
+    Object.assign(channels, part.channels)
+    for (const [id, list] of Object.entries(part.byChannel)) {
+      const target = (byChannel[id] ??= [])
+      for (const item of list) {
+        const key = `${item.channel}|${item.start}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        target.push(item)
+        programmes.push(item)
+      }
+    }
+  }
+
+  for (const list of Object.values(byChannel)) list.sort((a, b) => a.start - b.start)
+  programmes.sort((a, b) => a.start - b.start)
+
+  return { channels, programmes, byChannel, fetchedAt: Date.now(), source }
 }

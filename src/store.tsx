@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import type { AppSettings, Channel, DB, Playlist, StremioAddon } from './types'
+import { playlistEpgUrls } from './lib/m3u'
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
@@ -29,13 +30,22 @@ function defaultDb(): DB {
   }
 }
 
+function normalizePlaylist(playlist: Playlist): Playlist {
+  const epgUrls = playlistEpgUrls(playlist)
+  if (epgUrls.length === 0) return playlist
+  // Las primeras versiones guardaban el encabezado entero ("a.xml,b.xml") en
+  // epgUrl, así que no se descargaba ninguna guía. Se separa al cargar la base.
+  if (playlist.epgUrls?.length === epgUrls.length && playlist.epgUrl === epgUrls[0]) return playlist
+  return { ...playlist, epgUrls, epgUrl: epgUrls[0] }
+}
+
 function normalizeDb(raw: unknown): DB {
   const base = defaultDb()
   if (!raw || typeof raw !== 'object') return base
   const data = raw as Partial<DB>
   return {
     version: 1,
-    playlists: Array.isArray(data.playlists) ? data.playlists : [],
+    playlists: Array.isArray(data.playlists) ? data.playlists.map((item) => normalizePlaylist(item)) : [],
     favorites: Array.isArray(data.favorites) ? data.favorites : [],
     history: Array.isArray(data.history) ? data.history : [],
     settings: { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) },
