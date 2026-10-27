@@ -1,4 +1,4 @@
-import { Icon } from './Icons'
+import { BrandMark, Icon } from './Icons'
 import type { PageId } from '../types'
 
 interface SidebarProps {
@@ -24,11 +24,10 @@ export function Sidebar({ page, onNavigate, counts }: SidebarProps) {
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-mark">
-          <span className="brand-glow" />
-          <Icon name="play" size={18} strokeWidth={2.4} />
+          <BrandMark size={36} />
         </div>
         <div className="brand-text">
-          <strong>NovaTV</strong>
+          <strong>SquizanTV</strong>
         </div>
       </div>
 

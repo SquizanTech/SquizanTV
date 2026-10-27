@@ -1,11 +1,11 @@
 {
-  "name": "novatv",
-  "productName": "NovaTV",
-  "version": "0.4.0",
-  "description": "NovaTV - reproductor IPTV para Windows con EPG, Xtream Codes y M3U",
+  "name": "squizantv",
+  "productName": "SquizanTV",
+  "version": "0.5.0",
+  "description": "SquizanTV - reproductor IPTV para Windows con EPG, Xtream Codes, M3U y torrents",
   "author": {
-    "name": "NovaTV",
-    "email": "soporte@novatv.local"
+    "name": "SquizanTech",
+    "email": "soporte@squizantv.local"
   },
   "license": "MIT",
   "private": true,

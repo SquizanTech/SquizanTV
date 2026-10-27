@@ -7,7 +7,7 @@ import { Sidebar } from './components/Sidebar'
 import { Topbar } from './components/Topbar'
 import { Player } from './components/Player'
 import { AddPlaylistModal } from './components/AddPlaylistModal'
-import { Icon } from './components/Icons'
+import { BrandMark, Icon } from './components/Icons'
 import { HomePage } from './pages/HomePage'
 import { LivePage } from './pages/LivePage'
 import { MoviesPage } from './pages/MoviesPage'
@@ -186,10 +186,9 @@ export default function App() {
     return (
       <div className="splash">
         <div className="brand-mark">
-          <span className="brand-glow" />
-          <Icon name="play" size={26} strokeWidth={2.4} />
+          <BrandMark size={64} />
         </div>
-        <p>NovaTV</p>
+        <p>SquizanTV</p>
       </div>
     )
   }

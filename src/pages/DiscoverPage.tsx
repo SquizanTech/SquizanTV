@@ -37,11 +37,6 @@ const SUGGESTED: Array<{ name: string; url: string; description: string }> = [
     url: 'https://v3-cinemeta.strem.io/manifest.json',
     description: 'Catálogos oficiales de IMDb: populares, mejor valoradas y búsqueda de películas y series.',
   },
-  {
-    name: 'Torrentio',
-    url: 'https://torrentio.strem.fun/manifest.json',
-    description: 'Añade fuentes magnet a las fichas. Nova las reproduce con su motor de torrents.',
-  },
 ]
 
 interface CatalogEntry {
@@ -628,8 +623,8 @@ function MetaDrawer({ item, addons, preferredAddonUrl, onClose, onPlayTorrent, o
 
           {!streamsLoading && streams.length === 0 && !streamsError && (
             <p className="hint">
-              No hay fuentes para este título. Instala un addon de fuentes como Torrentio desde el botón
-              «Addons» o elige otro episodio.
+              No hay fuentes para este título con los addons instalados. Elige otro episodio o añade una fuente
+              desde «Addons».
             </p>
           )}
         </div>
@@ -858,8 +853,8 @@ export function DiscoverPage({ onPlayTorrent, onPlayDirect }: DiscoverPageProps)
           </span>
           <h2>Descubre con addons de Stremio</h2>
           <p>
-            Instala Cinemeta para navegar por los catálogos de IMDb o cualquier addon de catálogo que uses en
-            Stremio. También puedes añadir Torrentio para reproducir las fuentes sin salir de Nova.
+            Instala Cinemeta para navegar por los catálogos de IMDb o cualquier addon de catálogo y metadatos
+            que uses en Stremio. SquizanTV no incluye addons: tú decides cuáles añadir.
           </p>
           <div className="suggest-grid">
             {SUGGESTED.map((suggestion) => {

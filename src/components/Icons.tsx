@@ -52,6 +52,10 @@ const paths: Record<string, string> = {
     '<circle cx="12" cy="12" r="9"/><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3z"/>',
   puzzle:
     '<path d="M9 4a2 2 0 1 1 4 0v1h3a1 1 0 0 1 1 1v3h1a2 2 0 1 1 0 4h-1v3a1 1 0 0 1-1 1h-3v-1a2 2 0 1 0-4 0v1H6a1 1 0 0 1-1-1v-3H4a2 2 0 1 1 0-4h1V5a1 1 0 0 1 1-1h3z"/>',
+  rewind:
+    '<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/>',
+  forward:
+    '<path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/>',
 }
 
 interface IconProps {
@@ -79,5 +83,45 @@ export function Icon({ name, size = 18, className, style, strokeWidth = 1.8 }: I
       aria-hidden="true"
       dangerouslySetInnerHTML={{ __html: markup }}
     />
+  )
+}
+
+/**
+ * Marca de SquizanTV: la misma que el icono de la app (S crema, play rojo y
+ * punto dorado) para que la barra lateral, el splash y Ajustes compartan logo.
+ */
+export function BrandMark({ size = 36 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 512 512"
+      className="brand-svg"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="squizantv-bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#231d1b" />
+          <stop offset="1" stopColor="#08080a" />
+        </linearGradient>
+      </defs>
+      <rect x="10" y="10" width="492" height="492" rx="106" fill="url(#squizantv-bg)" />
+      <path
+        d="M294 150C294 118 264 98 226 98C176 98 145 130 145 170C145 218 190 234 234 246C284 259 320 278 320 322C320 362 282 390 232 390C184 390 151 367 145 333"
+        fill="none"
+        stroke="#f6efe4"
+        strokeWidth="42"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M348 212 348 308 416 260Z"
+        fill="#e50914"
+        stroke="#e50914"
+        strokeWidth="14"
+        strokeLinejoin="round"
+      />
+      <circle cx="362" cy="154" r="8" fill="#ffb800" />
+    </svg>
   )
 }

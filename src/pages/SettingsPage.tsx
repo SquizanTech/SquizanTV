@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDb } from '../store'
-import { Icon } from '../components/Icons'
+import { BrandMark, Icon } from '../components/Icons'
 
 export function SettingsPage() {
   const { db, updateSettings, resetAll } = useDb()
@@ -96,7 +96,7 @@ export function SettingsPage() {
           <span className="card-icon"><Icon name="download" size={17} /></span>
           <div>
             <h3>Actualizaciones</h3>
-            <p>NovaTV se actualiza desde tu propio servidor de releases.</p>
+            <p>SquizanTV se actualiza desde tu propio servidor de releases.</p>
           </div>
         </div>
 
@@ -106,7 +106,7 @@ export function SettingsPage() {
             value={feed}
             onChange={(event) => setFeed(event.target.value)}
             onBlur={() => updateSettings({ updateFeed: feed.trim() })}
-            placeholder="https://tudominio.com/novatv/updates"
+            placeholder="https://tudominio.com/squizantv/updates"
             spellCheck={false}
           />
         </label>
@@ -159,23 +159,23 @@ export function SettingsPage() {
               }
             }}
           >
-            <Icon name="trash" size={15} /> Restablecer NovaTV
+            <Icon name="trash" size={15} /> Restablecer SquizanTV
           </button>
         </div>
       </section>
 
       <section className="card about">
         <div className="about-mark">
-          <Icon name="play" size={18} strokeWidth={2.4} />
+          <BrandMark size={46} />
         </div>
         <div>
-          <h3>NovaTV <span className="badge">v{version}</span></h3>
+          <h3>SquizanTV <span className="badge">v{version}</span></h3>
           <p>
-            Reproductor IPTV para Windows con M3U, Xtream Codes, EPG y soporte HLS / MPEG-TS. Construido con
-            Electron, React y software libre.
+            Reproductor IPTV y torrents para Windows con M3U, Xtream Codes, EPG y soporte HLS / MPEG-TS.
+            Construido con Electron, React y software libre.
           </p>
           <p className="hint">
-            NovaTV no incluye contenido ni listas. Solo reproduce las fuentes que tú configures.
+            SquizanTV no incluye contenido ni listas. Solo reproduce las fuentes que tú configures.
           </p>
         </div>
       </section>

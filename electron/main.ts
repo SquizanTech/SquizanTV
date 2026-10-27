@@ -1,7 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { promises as fs } from 'node:fs'
-import { existsSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { gunzip } from 'node:zlib'
@@ -17,7 +17,23 @@ const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 // hasta que el usuario interactúe, y el reproductor arrancaría mudo.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 const dataDir = app.getPath('userData')
-const dbPath = path.join(dataDir, 'novatv.json')
+const dbPath = path.join(dataDir, 'squizantv.json')
+const legacyDbPath = path.join(app.getPath('appData'), 'NovaTV', 'novatv.json')
+
+/**
+ * Al cambiar el nombre de NovaTV a SquizanTV, Electron pasa a usar otra carpeta
+ * de datos. Copiamos la base antigua para no perder listas, favoritos ni ajustes.
+ */
+function migrateLegacyData(): void {
+  try {
+    if (existsSync(dbPath) || !existsSync(legacyDbPath)) return
+    mkdirSync(dataDir, { recursive: true })
+    copyFileSync(legacyDbPath, dbPath)
+  } catch {
+    /* si falla, la app arranca con datos vacios */
+  }
+}
+migrateLegacyData()
 
 let win: BrowserWindow | null = null
 
@@ -30,7 +46,7 @@ function createWindow(): void {
     backgroundColor: '#0a0c11',
     show: false,
     autoHideMenuBar: true,
-    title: 'NovaTV',
+    title: 'SquizanTV',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,7 +93,7 @@ const emptyDb = {
 async function readDb(): Promise<unknown> {
   try {
     const raw = await fs.readFile(dbPath, 'utf8')
-    return JSON.parse(raw)
+    return JSON.parse(raw.replace(/^\uFEFF/, ''))
   } catch {
     return emptyDb
   }
@@ -183,7 +199,7 @@ function registerIpc(): void {
       const res = await fetch(url, {
         redirect: 'follow',
         signal: controller.signal,
-        headers: { 'User-Agent': 'NovaTV/0.3.2' },
+        headers: { 'User-Agent': 'SquizanTV/0.5.0' },
       })
       clearTimeout(timer)
       if (!res.ok || !res.body) return { ok: false, reason: `http ${res.status}` }
@@ -217,8 +233,8 @@ function registerIpc(): void {
     return probeStream(url)
   })
 
-  ipcMain.handle('media:transcodeStream', async (_event, url: string, fullTranscode?: boolean) => {
-    return transcodeStream(url, Boolean(fullTranscode))
+  ipcMain.handle('media:transcodeStream', async (_event, url: string, fullTranscode?: boolean, startSeconds?: number) => {
+    return transcodeStream(url, Boolean(fullTranscode), Number(startSeconds) || 0)
   })
 
   ipcMain.handle('app:openExternal', (_event, url: string) => shell.openExternal(url))
@@ -257,7 +273,7 @@ function registerIpc(): void {
     const player = findExternalPlayer()
     if (!player) return { ok: false, message: 'No se encontró VLC ni mpv en el equipo.' }
     if (!/^https?:\/\/(127\.0\.0\.1|localhost):\d+\//i.test(url)) {
-      return { ok: false, message: 'Solo se pueden abrir fuentes locales de NovaTV.' }
+      return { ok: false, message: 'Solo se pueden abrir fuentes locales de SquizanTV.' }
     }
     try {
       const child = spawn(player, [url], { detached: true, stdio: 'ignore' })

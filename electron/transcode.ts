@@ -248,12 +248,17 @@ function killSession(id: string): void {
  * decodificable, H.264 si no. El ritmo lo marca el consumidor (-re), como una
  * emisión en directo: sin saltos de tiempo, pero con sonido garantizado.
  */
-export async function transcodeStream(srcUrl: string, fullTranscode = false): Promise<TranscodeResult> {
+export async function transcodeStream(srcUrl: string, fullTranscode = false, startSeconds = 0): Promise<TranscodeResult> {
   const port = await ensureServer()
   if (!port) return { ok: false, reason: 'No se pudo abrir el servidor local de conversión.' }
 
   const id = randomBytes(6).toString('hex')
-  const args = ['-hide_banner', '-loglevel', 'warning', '-nostdin', '-re', '-i', srcUrl, '-sn', '-dn']
+  const args = ['-hide_banner', '-loglevel', 'warning', '-nostdin', '-re']
+  // Salto en el tiempo: `-ss` antes de `-i` hace un seek rapido en la fuente
+  // (el servidor de torrents responde con Range) y el flujo nuevo empieza a
+  // emitirse desde ahi. El reproductor suma este desfase a su cronometro.
+  if (startSeconds > 0) args.push('-ss', startSeconds.toFixed(3))
+  args.push('-i', srcUrl, '-sn', '-dn')
   if (fullTranscode) args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23')
   else args.push('-c:v', 'copy')
   args.push('-c:a', 'aac', '-ac', '2', '-b:a', '192k', '-muxdelay', '0', '-muxpreload', '0', '-flush_packets', '1', '-f', 'mpegts', 'pipe:1')
@@ -283,7 +288,7 @@ export async function transcodeStream(srcUrl: string, fullTranscode = false): Pr
     }
     sessions.delete(id)
     if (code !== 0 && code !== null) {
-      console.warn(`[NovaTV] conversión terminada con código ${code}: ${session.stderrTail.slice(-300)}`)
+      console.warn(`[SquizanTV] conversión terminada con código ${code}: ${session.stderrTail.slice(-300)}`)
     }
   })
 

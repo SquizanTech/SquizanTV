@@ -124,21 +124,28 @@ input {
 
 .brand-mark {
   position: relative;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
   color: #fff;
-  background: var(--accent);
-  box-shadow: 0 4px 16px rgba(229, 9, 20, 0.32);
+  background: transparent;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
   overflow: hidden;
+}
+
+.brand-mark .brand-svg,
+.about-mark .brand-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
 }
 
 .brand-mark svg {
   position: relative;
   z-index: 1;
-  margin-left: 2px;
 }
 
 .brand-glow {
@@ -1567,6 +1574,42 @@ input {
   background: var(--accent);
 }
 
+.player-timeline.is-vod input:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.player-time-unknown {
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.5);
+  white-space: nowrap;
+}
+
+.player-seek-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  padding-left: 5px;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.player-controls .player-seek {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+}
+
+.player-seek span {
+  margin-top: 7px;
+  margin-left: -3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  opacity: 0.85;
+}
+
 .player-live {
   display: inline-flex;
   align-items: center;
@@ -2951,12 +2994,15 @@ input {
   display: grid;
   place-items: center;
   color: #fff;
-  background: var(--accent);
-  box-shadow: 0 8px 22px rgba(229, 9, 20, 0.35);
+  background: transparent;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
 }
 
 .about-mark svg {
-  margin-left: 2px;
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .about h3 {
@@ -3027,9 +3073,10 @@ input {
 }
 
 .splash .brand-mark {
-  width: 60px;
-  height: 60px;
-  border-radius: 18px;
+  width: 64px;
+  height: 64px;
+  border-radius: 19px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 
 .splash p {

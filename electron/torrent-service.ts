@@ -89,10 +89,23 @@ const SUBTITLE_EXTENSIONS = new Set(['srt', 'vtt', 'ass', 'ssa', 'sub'])
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'])
 const NFO_EXTENSIONS = new Set(['nfo', 'txt', 'md'])
 
-/** Tamano maximo de una respuesta abierta: mantiene la descarga secuencial. */
-const RANGE_CHUNK = 16 * 1024 * 1024
+/**
+ * Tamano maximo de una respuesta abierta (`bytes=N-`).
+ *
+ * Antes eran 16 MB, pero eso retrasaba el arranque: Chromium/ffmpeg primero
+ * piden la cabecera y el atomo `moov` (que suele estar al final del MP4), y el
+ * trozo de 16 MB del principio se descargaba antes que esa cola. Con 2 MB el
+ * primer trozo llega en cuanto hay un par y la reproduccion empieza al momento.
+ */
+const RANGE_CHUNK = 2 * 1024 * 1024
 /** Bytes que se preparan al recibir los metadatos para que el play sea instantaneo. */
-const PREBUFFER_BYTES = 3 * 1024 * 1024
+const PREBUFFER_BYTES = 2 * 1024 * 1024
+/**
+ * Prioridad de la ventana que se esta sirviendo. WebTorrent ordena las
+ * selecciones por prioridad, asi que el rango pedido por el reproductor se
+ * descarga antes que el resto de peticiones abiertas.
+ */
+const STREAM_PRIORITY = 3
 
 /**
  * bittorrent-dht trae una lista de bootstrap que en la practica deja la tabla
@@ -369,7 +382,9 @@ export class TorrentService extends EventEmitter {
     } catch {
       /* noop */
     }
-    this.emit('update', this.list())
+    // Ojo: aqui NO se emite `update` con la lista. La interfaz espera un unico
+    // TorrentSnapshot en `torrent:update`; enviar un array hacia que React
+    // intentara leer `snapshot.files` de un array y dejaba la pantalla en blanco.
     return true
   }
 
@@ -524,6 +539,35 @@ export class TorrentService extends EventEmitter {
     }
   }
 
+  /** Selecciona con prioridad alta las piezas que cubren un rango HTTP. */
+  private selectRange(
+    session: Session,
+    file: WebTorrentFile,
+    start: number,
+    end: number,
+  ): { startPiece: number; endPiece: number } | null {
+    const { pieceLength } = session.torrent
+    if (!pieceLength) return null
+    const startPiece = Math.floor((file.offset + start) / pieceLength)
+    const endPiece = Math.floor((file.offset + end) / pieceLength)
+    try {
+      session.torrent.select(startPiece, endPiece, STREAM_PRIORITY)
+      return { startPiece, endPiece }
+    } catch {
+      return null
+    }
+  }
+
+  /** Quita la seleccion temporal cuando la respuesta HTTP ya no la necesita. */
+  private deselectRange(session: Session, selection: { startPiece: number; endPiece: number } | null): void {
+    if (!selection) return
+    try {
+      session.torrent.deselect(selection.startPiece, selection.endPiece, STREAM_PRIORITY)
+    } catch {
+      /* el torrent ya se destruyo */
+    }
+  }
+
   private handleRequest(session: Session, req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const prefix = `/s/${session.token}/`
@@ -589,9 +633,15 @@ export class TorrentService extends EventEmitter {
         return
       }
 
+      // Marca esta ventana como la mas prioritaria. Es lo que hace que al pulsar
+      // Reproducir se descarguen primero los trozos que el reproductor necesita
+      // (incluido el `moov` del final) en vez de esperar a que termine otro
+      // bloque grande.
+      const selection = this.selectRange(session, file, start, end)
       const stream = file.createReadStream({ start, end })
       stream.on('error', () => res.destroy())
       res.on('close', () => {
+        this.deselectRange(session, selection)
         const destroyable = stream as unknown as { destroy?: () => void }
         destroyable.destroy?.()
       })

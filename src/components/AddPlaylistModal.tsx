@@ -274,7 +274,7 @@ export function AddPlaylistModal({ onClose, onAdded }: AddPlaylistModalProps) {
           )}
 
           <p className="hint legal">
-            NovaTV no incluye ni distribuye contenido. Usa solo listas y cuentas que tengas derecho a utilizar.
+            SquizanTV no incluye ni distribuye contenido. Usa solo listas y cuentas que tengas derecho a utilizar.
           </p>
         </div>
 

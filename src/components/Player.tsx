@@ -146,6 +146,12 @@ export function Player({
   const [externalPlayer, setExternalPlayer] = useState('')
   const [menu, setMenu] = useState<null | 'sub' | 'audio'>(null)
   const [subLoading, setSubLoading] = useState(false)
+  /** Desfase cuando el vídeo se sirve como MPEG-TS convertido y se salta en el tiempo. */
+  const seekOffsetRef = useRef(0)
+  const transcodeRef = useRef<{ full: boolean } | null>(null)
+  const seekRestartRef = useRef<((seconds: number) => void) | null>(null)
+  const mpegRef = useRef<ReturnType<typeof mpegts.createPlayer> | null>(null)
+  const isVod = channel.kind !== 'live'
   const [subError, setSubError] = useState('')
   const [customSubs, setCustomSubs] = useState<CustomSubtitle[]>([])
   const [activeSub, setActiveSub] = useState('off')
@@ -470,6 +476,13 @@ export function Player({
     let mpeg: ReturnType<typeof mpegts.createPlayer> | null = null
     let fallbackUsed = false
 
+    seekOffsetRef.current = 0
+    transcodeRef.current = null
+    seekRestartRef.current = null
+    mpegRef.current = null
+    setCurrentTime(0)
+    setDuration(channel.duration && channel.duration > 0 ? channel.duration : 0)
+
     const cleanupEngines = () => {
       try {
         hls?.destroy()
@@ -484,6 +497,7 @@ export function Player({
       hls = null
       mpeg = null
       hlsRef.current = null
+      mpegRef.current = null
     }
 
     const fail = (message: string) => {
@@ -532,6 +546,7 @@ export function Player({
             autoCleanupSourceBuffer: true,
           },
         )
+        mpegRef.current = mpeg
         mpeg.attachMediaElement(video)
         // Algunos canales (AceStream sobre todo) traen audio AC-3/E-AC-3, que
         // Chromium no decodifica: mpegts lo salta y el vídeo queda mudo.
@@ -622,15 +637,46 @@ export function Player({
       return true
     }
 
+    /**
+     * Salto en el tiempo para los vídeos que van convertidos a MPEG-TS en vivo.
+     * El flujo convertido no admite `currentTime`, así que se levanta una nueva
+     * conversión con `-ss` y se reengancha el reproductor en ese minuto.
+     */
+    const restartTranscodeAt = async (seconds: number) => {
+      const info = transcodeRef.current
+      if (disposed || !info) return
+      setStatus('loading')
+      setLoadNote(`Saltando a ${clock(seconds)}…`)
+      setCurrentTime(seconds)
+      try {
+        const trans = await window.nova.media.transcodeStream(channel.url, info.full, seconds)
+        if (disposed) return
+        if (!trans?.ok || !trans.url) {
+          fail(trans?.reason || 'No se pudo saltar a ese punto del vídeo.')
+          return
+        }
+        cleanupEngines()
+        seekOffsetRef.current = seconds
+        transcodeRef.current = { full: info.full }
+        setLoadNote('')
+        startTs(trans.url, false, true)
+      } catch (error) {
+        if (!disposed) fail(error instanceof Error ? error.message : 'No se pudo saltar a ese punto del vídeo.')
+      }
+    }
+    seekRestartRef.current = (seconds) => {
+      void restartTranscodeAt(seconds)
+    }
+
     const onPlaying = () => {
       setStatus('playing')
       setLoadNote('')
     }
     const onPause = () => setStatus((prev) => (prev === 'error' ? prev : 'paused'))
     const onWaiting = () => setStatus('loading')
-    const onTime = () => setCurrentTime(video.currentTime)
+    const onTime = () => setCurrentTime(seekOffsetRef.current + video.currentTime)
     const onMeta = () => {
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0)
+      if (Number.isFinite(video.duration) && video.duration > 0) setDuration(video.duration)
       setStatus('playing')
     }
     const onVideoError = () => {
@@ -682,6 +728,7 @@ export function Player({
             const probe = await window.nova.media.probeStream(channel.url)
             if (disposed) return
             if (probe?.ok) {
+              if (probe.duration && probe.duration > 0) setDuration(probe.duration)
               if (probe.container === 'mpegts') {
                 startTs(channel.url, false)
                 return
@@ -700,6 +747,7 @@ export function Player({
                   ? 'Convirtiendo el audio (Dolby/DTS) a AAC…'
                   : 'Convirtiendo el vídeo y el audio para el reproductor interno…',
               )
+              transcodeRef.current = { full: !(videoOk && containerOk) }
               const trans = await window.nova.media.transcodeStream(channel.url, !(videoOk && containerOk))
               if (disposed) return
               if (trans?.ok && trans.url) {
@@ -757,9 +805,17 @@ export function Player({
       if (event.key === 'Escape') {
         if (menu) setMenu(null)
         else onClose()
-      } else if (event.key === 'ArrowRight') goRelative(1)
-      else if (event.key === 'ArrowLeft') goRelative(-1)
-      else if (event.key.toLowerCase() === 'f') void toggleFullscreen()
+      } else if (event.key === 'ArrowRight') {
+        if (isVod) {
+          event.preventDefault()
+          seekBy(10)
+        } else goRelative(1)
+      } else if (event.key === 'ArrowLeft') {
+        if (isVod) {
+          event.preventDefault()
+          seekBy(-10)
+        } else goRelative(-1)
+      } else if (event.key.toLowerCase() === 'f') void toggleFullscreen()
       else if (event.key === ' ') {
         event.preventDefault()
         togglePlay()
@@ -793,6 +849,30 @@ export function Player({
     if (video.paused) void video.play()
     else video.pause()
   }
+
+  /** Tiempo absoluto del vídeo (incluye el desfase de una conversión reiniciada). */
+  const absoluteTime = () => seekOffsetRef.current + (videoRef.current?.currentTime ?? 0)
+
+  /** Salta a un segundo concreto. En MPEG-TS convertido reinicia ffmpeg en ese punto. */
+  const seekTo = (seconds: number) => {
+    const video = videoRef.current
+    if (!video) return
+    const limit = duration > 0 ? duration : channel.duration && channel.duration > 0 ? channel.duration : 0
+    const target = Math.max(0, limit > 0 ? Math.min(seconds, limit) : seconds)
+    if (transcodeRef.current && seekRestartRef.current) {
+      setCurrentTime(target)
+      seekRestartRef.current(target)
+      return
+    }
+    try {
+      video.currentTime = target
+      setCurrentTime(target)
+    } catch {
+      /* el motor todavía no admite saltos */
+    }
+  }
+
+  const seekBy = (delta: number) => seekTo(absoluteTime() + delta)
 
   const toggleFullscreen = async () => {
     if (!shellRef.current) return
@@ -1074,23 +1154,21 @@ export function Player({
         )}
 
         <div className="player-bottom">
-          <div className="player-timeline">
-            {duration > 0 && (
+          <div className={`player-timeline ${isVod ? 'is-vod' : ''}`}>
+            {isVod && (
               <input
                 type="range"
                 min={0}
                 max={progressMax}
                 step={0.5}
                 value={progressValue}
-                onChange={(event) => {
-                  const video = videoRef.current
-                  if (!video) return
-                  video.currentTime = Number(event.target.value)
-                  setCurrentTime(Number(event.target.value))
-                }}
+                disabled={duration <= 0}
+                aria-label="Posición de la película"
+                onChange={(event) => seekTo(Number(event.target.value))}
               />
             )}
-            {channel.kind === 'live' && (
+            {isVod && duration <= 0 && <span className="player-time-unknown">Preparando la duración…</span>}
+            {!isVod && (
               <span className="player-live">
                 <span className="dot-live" /> EN DIRECTO
               </span>
@@ -1101,12 +1179,36 @@ export function Player({
             <button type="button" className="icon-btn" onClick={togglePlay} title="Reproducir / Pausar">
               <Icon name={status === 'playing' ? 'pause' : 'play'} size={20} />
             </button>
-            <button type="button" className="icon-btn" onClick={() => goRelative(-1)} title="Anterior">
-              <Icon name="left" size={20} />
-            </button>
-            <button type="button" className="icon-btn" onClick={() => goRelative(1)} title="Siguiente">
-              <Icon name="right" size={20} />
-            </button>
+
+            {isVod ? (
+              <div className="player-seek-group" role="group" aria-label="Saltar en el tiempo">
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(-30)} title="Retroceder 30 segundos">
+                  <Icon name="rewind" size={17} />
+                  <span>30</span>
+                </button>
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(-10)} title="Retroceder 10 segundos">
+                  <Icon name="rewind" size={14} />
+                  <span>10</span>
+                </button>
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(10)} title="Avanzar 10 segundos">
+                  <Icon name="forward" size={14} />
+                  <span>10</span>
+                </button>
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(30)} title="Avanzar 30 segundos">
+                  <Icon name="forward" size={17} />
+                  <span>30</span>
+                </button>
+              </div>
+            ) : (
+              <>
+                <button type="button" className="icon-btn" onClick={() => goRelative(-1)} title="Anterior">
+                  <Icon name="left" size={20} />
+                </button>
+                <button type="button" className="icon-btn" onClick={() => goRelative(1)} title="Siguiente">
+                  <Icon name="right" size={20} />
+                </button>
+              </>
+            )}
 
             <div className="player-volume">
               <button
@@ -1133,12 +1235,12 @@ export function Player({
             </div>
 
             <span className="player-time">
-              {duration > 0 ? `${clock(currentTime)} / ${clock(duration)}` : ''}
+              {duration > 0 ? `${clock(currentTime)} / ${clock(duration)}` : isVod ? clock(currentTime) : ''}
             </span>
 
             <div className="player-spacer" />
 
-            {hasSubSources && (
+            {(hasSubSources || isVod) && (
               <button
                 type="button"
                 className={`icon-btn ${activeSub !== 'off' ? 'is-active' : ''}`}

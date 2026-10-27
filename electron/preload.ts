@@ -49,8 +49,9 @@ const api = {
     transcodeStream: (
       url: string,
       fullTranscode?: boolean,
+      startSeconds?: number,
     ): Promise<{ ok: boolean; url?: string; reason?: string }> =>
-      ipcRenderer.invoke('media:transcodeStream', url, fullTranscode),
+      ipcRenderer.invoke('media:transcodeStream', url, fullTranscode, startSeconds),
   },
   updates: {
     check: (feedUrl?: string): Promise<{ ok: boolean; message?: string; version?: string }> =>

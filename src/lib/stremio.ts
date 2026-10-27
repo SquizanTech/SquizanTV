@@ -335,7 +335,7 @@ export function magnetForStream(stream: AddonStream): string | null {
   const hash = stream.infoHash.trim().toLowerCase()
   if (!/^[a-z0-9]{32,40}$/.test(hash)) return null
 
-  const filename = stream.behaviorHints?.filename || stream.title?.split('\n')[0] || stream.name || 'NovaTV'
+  const filename = stream.behaviorHints?.filename || stream.title?.split('\n')[0] || stream.name || 'SquizanTV'
   const params = [`xt=urn:btih:${hash}`, `dn=${encodeURIComponent(filename.slice(0, 120))}`]
   for (const source of stream.sources ?? []) {
     if (/^tracker:/i.test(source)) {

@@ -7,7 +7,7 @@ let service: TorrentService | null = null
 
 function getService(): TorrentService {
   if (service) return service
-  const downloadDir = path.join(app.getPath('temp'), 'NovaTV', 'torrents')
+  const downloadDir = path.join(app.getPath('temp'), 'SquizanTV', 'torrents')
   service = new TorrentService(downloadDir)
   service.warmUp()
   service.on('update', (snapshot: TorrentSnapshot) => {

@@ -8,7 +8,7 @@ import type { NovaApi } from '../../electron/preload'
 export function installMockBridge(): void {
   if (typeof window === 'undefined' || window.nova) return
 
-  const KEY = 'novatv-db'
+  const KEY = 'squizantv-db'
   const mock = {
     db: {
       read: async (): Promise<unknown> => {

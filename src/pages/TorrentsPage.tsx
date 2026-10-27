@@ -317,10 +317,18 @@ export function TorrentsPage({ onPlayTorrent }: TorrentsPageProps) {
       return
     }
     setClearing(true)
-    const result = await window.nova.torrents.clearCache()
-    setClearing(false)
-    setItems([])
-    setNotice({ type: 'ok', text: `Caché borrada (${formatBytes(result.bytes)} liberados).` })
+    try {
+      const result = await window.nova.torrents.clearCache()
+      setItems([])
+      setNotice({ type: 'ok', text: `Caché borrada (${formatBytes(result.bytes)} liberados).` })
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'No se pudo borrar la caché. Cierra el reproductor e inténtalo de nuevo.',
+      })
+    } finally {
+      setClearing(false)
+    }
   }
 
   const remove = (snapshot: TorrentSnapshot) => {
@@ -418,7 +426,7 @@ export function TorrentsPage({ onPlayTorrent }: TorrentsPageProps) {
 
       <p className="hint legal">
         Reproduce solo contenido que tengas derecho a usar. Al usar BitTorrent tu dirección IP es visible para los
-        demás pares del torrent. Los archivos se guardan temporalmente en la carpeta temporal de NovaTV hasta que
+        demás pares del torrent. Los archivos se guardan temporalmente en la carpeta temporal de SquizanTV hasta que
         pulses «Borrar caché».
       </p>
     </div>

@@ -1,8 +1,8 @@
-appId: com.novatv.player
-productName: NovaTV
-copyright: Copyright © 2026 NovaTV
+appId: com.squizantv.player
+productName: SquizanTV
+copyright: Copyright © 2026 SquizanTech
 
-# NovaTV no usa modulos nativos propios; evita rebuilds de dependencias
+# SquizanTV no usa modulos nativos propios; evita rebuilds de dependencias
 # opcionales (bufferutil, utp-native) que solo aportan rendimiento.
 npmRebuild: false
 
@@ -23,7 +23,7 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: NovaTV-Setup-${version}.${ext}
+  artifactName: SquizanTV-Setup-${version}.${ext}
 
 nsis:
   oneClick: false
@@ -31,13 +31,13 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: NovaTV
+  shortcutName: SquizanTV
   runAfterFinish: true
   deleteAppDataOnUninstall: false
 
 portable:
-  artifactName: NovaTV-Portable-${version}.${ext}
+  artifactName: SquizanTV-Portable-${version}.${ext}
 
 publish:
   provider: generic
-  url: https://updates.novatv.app/
+  url: https://updates.squizantv.app/

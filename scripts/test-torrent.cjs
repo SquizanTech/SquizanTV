@@ -10,7 +10,7 @@ const { TorrentService } = require('./.torrent-service.cjs')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-torrent-test-'))
 const seedDir = path.join(root, 'seed')
-const contentDir = path.join(seedDir, 'NovaTest')
+const contentDir = path.join(seedDir, 'SquizanTest')
 const leechDir = path.join(root, 'leech')
 fs.mkdirSync(contentDir, { recursive: true })
 fs.mkdirSync(leechDir, { recursive: true })
@@ -54,7 +54,7 @@ async function main() {
   console.log('tracker en', announce)
 
   const torrentBuffer = await new Promise((resolve, reject) =>
-    createTorrent(contentDir, { name: 'NovaTest', announce: [announce], pieceLength: 32768 }, (err, buf) =>
+    createTorrent(contentDir, { name: 'SquizanTest', announce: [announce], pieceLength: 32768 }, (err, buf) =>
       err ? reject(err) : resolve(buf),
     ),
   )
@@ -136,11 +136,11 @@ async function main() {
   const openBuf = Buffer.from(await open.arrayBuffer())
   check('rango abierto responde 206', open.status === 206, String(open.status))
   check(
-    'rango abierto limitado a 16 MB',
-    open.headers.get('content-range') === `bytes 0-16777215/${size}`,
+    'rango abierto limitado a 2 MB',
+    open.headers.get('content-range') === `bytes 0-2097151/${size}`,
     open.headers.get('content-range'),
   )
-  check('bloque de 16 MB recibido', openBuf.length === 16 * 1024 * 1024, String(openBuf.length))
+  check('bloque de 2 MB recibido', openBuf.length === 2 * 1024 * 1024, String(openBuf.length))
 
   // Rango sufijo (atomo moov al final de un MP4)
   const tail = await fetch(videoUrl, { headers: { Range: 'bytes=-1024' } })
