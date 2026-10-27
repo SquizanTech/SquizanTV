@@ -1,0 +1,48 @@
+{
+  "name": "novatv",
+  "productName": "NovaTV",
+  "version": "0.3.3",
+  "description": "NovaTV - reproductor IPTV para Windows con EPG, Xtream Codes y M3U",
+  "author": {
+    "name": "NovaTV",
+    "email": "soporte@novatv.local"
+  },
+  "license": "MIT",
+  "private": true,
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "npm run build:main && concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build:main": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --target=node22 --external:electron --external:electron-updater --external:webtorrent --outdir=dist-electron --format=cjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && npm run build:main",
+    "typecheck": "tsc --noEmit",
+    "test:torrent": "esbuild electron/torrent-service.ts --bundle --platform=node --format=cjs --external:webtorrent --outfile=scripts/.torrent-service.cjs && node scripts/test-torrent.cjs",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win nsis --publish never",
+    "dist:portable": "npm run build && electron-builder --win portable --publish never"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "electron-updater": "^6.8.11",
+    "fast-xml-parser": "^5.11.2",
+    "hls.js": "^1.7.3",
+    "mpegts.js": "^1.8.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "webtorrent": "^1.9.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "wait-on": "^9.5.1"
+  }
+}

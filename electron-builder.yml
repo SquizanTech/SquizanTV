@@ -1,0 +1,43 @@
+appId: com.novatv.player
+productName: NovaTV
+copyright: Copyright © 2026 NovaTV
+
+# NovaTV no usa modulos nativos propios; evita rebuilds de dependencias
+# opcionales (bufferutil, utp-native) que solo aportan rendimiento.
+npmRebuild: false
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - dist-electron/**
+  - package.json
+
+asar: true
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: NovaTV-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: NovaTV
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: NovaTV-Portable-${version}.${ext}
+
+publish:
+  provider: generic
+  url: https://updates.novatv.app/
