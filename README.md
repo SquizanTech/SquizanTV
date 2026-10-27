@@ -17,10 +17,10 @@ Reproductor de escritorio para Windows con IPTV (M3U y Xtream Codes), EPG, pelí
 Entra en **[Releases](https://github.com/SquizanTech/NovaTV/releases)** y descarga el archivo más reciente:
 
 ```
-SquizanTV-Setup-0.5.1.exe
+SquizanTV-Setup-0.5.2.exe
 ```
 
-También puedes usar la versión portable `SquizanTV-Portable-0.5.1.exe` si no quieres instalar nada.
+También puedes usar la versión portable `SquizanTV-Portable-0.5.2.exe` si no quieres instalar nada.
 
 ### 2. Ejecuta el instalador
 
@@ -98,7 +98,7 @@ npm run dist
 
 Genera en `release/`:
 
-- `SquizanTV-Setup-0.5.1.exe`: instalador NSIS.
+- `SquizanTV-Setup-0.5.2.exe`: instalador NSIS.
 - `latest.yml` y el `.blockmap`: necesarios para las actualizaciones.
 - `win-unpacked/`: versión sin instalar para probar.
 
@@ -146,7 +146,7 @@ El renderer nunca accede a Node directamente: todo pasa por `window.nova` con `c
 
 1. El proceso principal usa `webtorrent` con DHT y trackers TCP/UDP. La DHT se arranca al abrir la sección para que el primer magnet no espere.
 2. Al recibir los metadatos se detecta el vídeo principal y se preparan sus primeros 2 MB con prioridad alta.
-3. El servidor HTTP local (`127.0.0.1`) sirve los archivos con soporte de `Range`. Cada petición abierta se entrega en bloques de **2 MB** y la ventana solicitada se marca con prioridad alta dentro de WebTorrent. Así el reproductor recibe primero lo que necesita para el primer fotograma, incluido el átomo `moov` de los MP4 que lo llevan al final.
+3. El servidor HTTP local (`127.0.0.1`) sirve los archivos con soporte de `Range`. Las peticiones abiertas (`bytes=N-`) se entregan como un flujo continuo por ventanas de 2 MB: se mantienen unas pocas ventanas seleccionadas por delante y se sigue escribiendo en la misma conexión. Antes la respuesta terminaba en el primer bloque y ffmpeg veía un EOF, lo que cortaba la reproducción a los pocos segundos. Así el reproductor recibe primero lo que necesita para el primer fotograma, incluido el átomo `moov` de los MP4 que lo llevan al final, sin cortes.
 4. La descarga es secuencial sobre la zona que se está viendo; no se descarga el archivo completo antes de empezar.
 5. Antes de reproducir se sondea el archivo con ffmpeg (contenedor, códec de vídeo y formato de píxeles). Si Chromium puede abrirlo tal cual, se reproduce directamente.
 6. Si el audio no es compatible (AC-3/E-AC-3/DTS/TrueHD) se convierte a AAC y el vídeo se **copia** sin recodificar, salvo que no sea H.264 de 8 bits.

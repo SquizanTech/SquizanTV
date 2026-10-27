@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import type { AddressInfo } from 'node:net'
+import type { Readable } from 'node:stream'
 import type { AddTorrentResult, TorrentFileInfo, TorrentSnapshot } from '../src/types'
 
 /**
@@ -90,14 +91,19 @@ const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'])
 const NFO_EXTENSIONS = new Set(['nfo', 'txt', 'md'])
 
 /**
- * Tamano maximo de una respuesta abierta (`bytes=N-`).
+ * Tamano de cada ventana de lectura de una respuesta abierta (`bytes=N-`).
  *
- * Antes eran 16 MB, pero eso retrasaba el arranque: Chromium/ffmpeg primero
- * piden la cabecera y el atomo `moov` (que suele estar al final del MP4), y el
- * trozo de 16 MB del principio se descargaba antes que esa cola. Con 2 MB el
- * primer trozo llega en cuanto hay un par y la reproduccion empieza al momento.
+ * El servidor no cierra la respuesta al terminar la ventana: pide la siguiente
+ * y sigue escribiendo en la misma conexion. Asi ffmpeg y el <video> ven un
+ * flujo continuo. Antes la respuesta terminaba a los 2 MB y la reproduccion se
+ * cortaba a los pocos segundos, justo cuando ffmpeg llegaba al final del bloque.
+ *
+ * La ventana es pequena para que el primer trozo llegue en cuanto hay un par
+ * (sin esperar a 16 MB) y para priorizar la parte que se esta viendo.
  */
 const RANGE_CHUNK = 2 * 1024 * 1024
+/** Ventanas que se dejan seleccionadas por delante para no esperar entre bloques. */
+const RANGE_LOOKAHEAD = 3
 /** Bytes que se preparan al recibir los metadatos para que el play sea instantaneo. */
 const PREBUFFER_BYTES = 2 * 1024 * 1024
 /**
@@ -568,6 +574,89 @@ export class TorrentService extends EventEmitter {
     }
   }
 
+  /**
+   * Sirve un rango abierto en una sola respuesta HTTP, ventana a ventana.
+   *
+   * Antes cada `bytes=N-` terminaba a los 2 MB, asi que ffmpeg veia un EOF y la
+   * reproduccion se paraba a los pocos segundos. Ahora se encadenan las
+   * ventanas: al terminar una se selecciona la siguiente y se sigue escribiendo
+   * en la misma conexion. Solo se marcan como prioritarias unas pocas ventanas
+   * por delante, para que el reproductor tenga datos sin esperar entre bloques.
+   */
+  private pipeRange(
+    session: Session,
+    file: WebTorrentFile,
+    res: http.ServerResponse,
+    start: number,
+    total: number,
+  ): void {
+    let position = start
+    let current: Readable | null = null
+    let selection: { startPiece: number; endPiece: number } | null = null
+    let closed = false
+
+    res.once('close', () => {
+      closed = true
+      current?.destroy()
+      current = null
+      this.deselectRange(session, selection)
+      selection = null
+    })
+
+    const pump = (): void => {
+      if (closed || res.destroyed) return
+      if (position >= total) {
+        closed = true
+        this.deselectRange(session, selection)
+        selection = null
+        res.end()
+        return
+      }
+
+      const windowEnd = Math.min(total - 1, position + RANGE_CHUNK - 1)
+      const lookaheadEnd = Math.min(total - 1, position + RANGE_CHUNK * RANGE_LOOKAHEAD - 1)
+      const next = this.selectRange(session, file, position, lookaheadEnd)
+      const previous = selection
+      selection = next
+      if (previous) this.deselectRange(session, previous)
+
+      let stream: Readable
+      try {
+        stream = file.createReadStream({ start: position, end: windowEnd }) as Readable
+      } catch {
+        closed = true
+        this.deselectRange(session, selection)
+        selection = null
+        res.destroy()
+        return
+      }
+      current = stream
+
+      stream.on('data', (chunk: Buffer) => {
+        if (closed) return
+        position += chunk.length
+        if (!res.write(chunk)) {
+          stream.pause()
+          res.once('drain', () => {
+            if (!closed) stream.resume()
+          })
+        }
+      })
+      stream.once('error', () => {
+        closed = true
+        this.deselectRange(session, selection)
+        selection = null
+        res.destroy()
+      })
+      stream.once('end', () => {
+        if (current === stream) current = null
+        pump()
+      })
+    }
+
+    pump()
+  }
+
   private handleRequest(session: Session, req: http.IncomingMessage, res: http.ServerResponse): void {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const prefix = `/s/${session.token}/`
@@ -607,15 +696,11 @@ export class TorrentService extends EventEmitter {
         : match[1]
           ? Number(match[1])
           : 0
-      const requestedEnd = match[2] ? Math.min(Number(match[2]), total - 1) : total - 1
-      // Un rango abierto (`bytes=N-`) se sirve por bloques: asi WebTorrent solo
-      // selecciona la ventana que se esta viendo y descarga en orden, no todo el
-      // archivo a la vez en orden aleatorio.
-      const end = suffix
-        ? total - 1
-        : match[2]
-          ? requestedEnd
-          : Math.min(total - 1, start + RANGE_CHUNK - 1)
+      // Un rango abierto (`bytes=N-`) se sirve hasta el final del archivo, pero
+      // por ventanas encadenadas (ver pipeRange). Cerrar la respuesta en el
+      // primer bloque hacia que ffmpeg viera un EOF y cortaba el video.
+      const openEnded = !suffix && !match[2]
+      const end = suffix ? total - 1 : match[2] ? Math.min(Number(match[2]), total - 1) : total - 1
 
       if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
         res.writeHead(416, { 'Content-Range': `bytes */${total}` }).end()
@@ -633,10 +718,13 @@ export class TorrentService extends EventEmitter {
         return
       }
 
-      // Marca esta ventana como la mas prioritaria. Es lo que hace que al pulsar
-      // Reproducir se descarguen primero los trozos que el reproductor necesita
-      // (incluido el `moov` del final) en vez de esperar a que termine otro
-      // bloque grande.
+      if (openEnded) {
+        this.pipeRange(session, file, res, start, total)
+        return
+      }
+
+      // Un rango con final explicito (cabecera, moov, salto) es corto y
+      // acotado: se sirve de una vez.
       const selection = this.selectRange(session, file, start, end)
       const stream = file.createReadStream({ start, end })
       stream.on('error', () => res.destroy())
@@ -654,12 +742,7 @@ export class TorrentService extends EventEmitter {
       res.end()
       return
     }
-    const stream = file.createReadStream()
-    stream.on('error', () => res.destroy())
-    res.on('close', () => {
-      const destroyable = stream as unknown as { destroy?: () => void }
-      destroyable.destroy?.()
-    })
-    stream.pipe(res)
+    // Sin Range (mpegts.js suele pedir asi): mismo flujo continuo.
+    this.pipeRange(session, file, res, 0, total)
   }
 }

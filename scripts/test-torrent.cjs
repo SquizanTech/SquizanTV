@@ -131,16 +131,16 @@ async function main() {
   check('Content-Range correcto', first.headers.get('content-range') === `bytes 0-65535/${size}`, first.headers.get('content-range'))
   check('bytes iniciales idénticos', firstBuf.equals(full.subarray(0, 65536)), `${firstBuf.length} bytes`)
 
-  // Rango abierto: se sirve por bloques para descargar en orden
+  // Rango abierto: debe entregar un flujo continuo (antes se cortaba a los 2 MB)
   const open = await fetch(videoUrl, { headers: { Range: 'bytes=0-' } })
   const openBuf = Buffer.from(await open.arrayBuffer())
   check('rango abierto responde 206', open.status === 206, String(open.status))
   check(
-    'rango abierto limitado a 2 MB',
-    open.headers.get('content-range') === `bytes 0-2097151/${size}`,
+    'rango abierto llega hasta el final',
+    open.headers.get('content-range') === `bytes 0-${size - 1}/${size}`,
     open.headers.get('content-range'),
   )
-  check('bloque de 2 MB recibido', openBuf.length === 2 * 1024 * 1024, String(openBuf.length))
+  check('flujo continuo sin corte a los 2 MB', openBuf.length === size && openBuf.equals(full), `${openBuf.length} bytes`)
 
   // Rango sufijo (atomo moov al final de un MP4)
   const tail = await fetch(videoUrl, { headers: { Range: 'bytes=-1024' } })
