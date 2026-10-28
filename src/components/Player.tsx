@@ -177,6 +177,8 @@ export function Player({
   const [attempt, setAttempt] = useState(0)
   const [idle, setIdle] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [started, setStarted] = useState(false)
   const [externalPlayer, setExternalPlayer] = useState('')
   const [menu, setMenu] = useState<null | 'sub' | 'audio'>(null)
   const [subLoading, setSubLoading] = useState(false)
@@ -185,6 +187,8 @@ export function Player({
   const transcodeRef = useRef<{ full: boolean } | null>(null)
   const seekRestartRef = useRef<((seconds: number) => void) | null>(null)
   const mpegRef = useRef<ReturnType<typeof mpegts.createPlayer> | null>(null)
+  /** Ya se vio el primer fotograma: los cortes posteriores son buffering, no carga. */
+  const startedRef = useRef(false)
   /** false solo cuando el usuario pausa a propósito. */
   const playIntentRef = useRef(true)
   const isVod = channel.kind !== 'live'
@@ -484,22 +488,29 @@ export function Player({
     if (!shell) return
     shell.addEventListener('pointermove', wakeShell)
     shell.addEventListener('pointerdown', wakeShell)
+    // El vídeo puede quedar en una capa que no propague el movimiento al
+    // contenedor. Se escucha también en la ventana para que la barra
+    // reaparezca siempre al mover el ratón o pulsar una tecla.
+    window.addEventListener('pointermove', wakeShell)
+    window.addEventListener('keydown', wakeShell)
     wakeShell()
     return () => {
       shell.removeEventListener('pointermove', wakeShell)
       shell.removeEventListener('pointerdown', wakeShell)
+      window.removeEventListener('pointermove', wakeShell)
+      window.removeEventListener('keydown', wakeShell)
       if (idleTimer.current) window.clearTimeout(idleTimer.current)
     }
   }, [wakeShell, attempt, channel.id])
 
   useEffect(() => {
     const shell = shellRef.current
-    if (!idle || menu || showInfo || status !== 'playing') {
+    if (!idle || menu || showInfo || helpOpen || status !== 'playing') {
       if (shell) shell.classList.remove('is-idle')
       return
     }
     if (shell) shell.classList.add('is-idle')
-  }, [idle, menu, showInfo, status])
+  }, [idle, menu, showInfo, helpOpen, status])
 
   /* ---------- Motor de reproducción ---------- */
 
@@ -525,6 +536,8 @@ export function Player({
     playIntentRef.current = true
     setCurrentTime(0)
     setError('')
+    startedRef.current = false
+    setStarted(false)
     setDuration(channel.duration && channel.duration > 0 ? channel.duration : 0)
 
     const cleanupEngines = () => {
@@ -824,20 +837,37 @@ export function Player({
 
     const onPlaying = () => {
       playIntentRef.current = true
+      startedRef.current = true
+      setStarted(true)
       setStatus('playing')
       setLoadNote('')
     }
     const onPause = () => {
+      // Al pausar los controles deben quedar a la vista aunque el temporizador
+      // de auto-ocultar estuviera a punto de dispararse.
+      setIdle(false)
       if (statusRef.current === 'loading') return
       setStatus((prev) => (prev === 'error' ? prev : 'paused'))
     }
-    const onWaiting = () => setStatus('loading')
+    // Un corte de red durante una conversión dispara `waiting` continuamente.
+    // Solo es "cargando" la primera vez; después es un búfer momentáneo y no
+    // debe tapar la película con el cartel de "Conectando…".
+    const onWaiting = () => {
+      if (startedRef.current) return
+      setStatus('loading')
+    }
     const onCanPlay = () => {
       if (!playIntentRef.current || disposed) return
       if (!video.paused) return
       void video.play().then(() => setStatus('playing')).catch(() => undefined)
     }
-    const onTime = () => setCurrentTime(seekOffsetRef.current + video.currentTime)
+    const onTime = () => {
+      if (!startedRef.current && video.currentTime > 0.2) {
+        startedRef.current = true
+        setStarted(true)
+      }
+      setCurrentTime(seekOffsetRef.current + video.currentTime)
+    }
     const onMeta = () => {
       if (Number.isFinite(video.duration) && video.duration > 0) setDuration(video.duration)
       setStatus('playing')
@@ -1105,9 +1135,15 @@ export function Player({
             aria-hidden="true"
           />
         )}
-        <video ref={videoRef} className="player-video" playsInline />
+        <video ref={videoRef} className="player-video" playsInline onClick={togglePlay} />
 
-        {status === 'loading' && (
+        {status === 'paused' && (
+          <button type="button" className="player-center-play" onClick={togglePlay} title="Reanudar (Espacio)">
+            <Icon name="play" size={30} />
+          </button>
+        )}
+
+        {status === 'loading' && (!started || loadNote) && (
           <div className="player-loader">
             <span className="spinner" />
             <p>Conectando con {titleText}...</p>
@@ -1188,6 +1224,14 @@ export function Player({
             </span>
           </div>
           <div className="player-top-actions">
+            <button
+              type="button"
+              className={`icon-btn player-help-btn ${helpOpen ? 'is-active' : ''}`}
+              title="Controles y atajos"
+              onClick={() => setHelpOpen((value) => !value)}
+            >
+              ?
+            </button>
             {details?.plot && (
               <button
                 type="button"
@@ -1243,6 +1287,45 @@ export function Player({
             ) : (
               <p className="muted">El torrent no incluye sinopsis.</p>
             )}
+          </aside>
+        )}
+
+        {helpOpen && (
+          <aside className="player-info player-help">
+            <header>
+              <h3>Controles y atajos</h3>
+              <button type="button" className="icon-btn" title="Cerrar ayuda" onClick={() => setHelpOpen(false)}>
+                <Icon name="x" size={16} />
+              </button>
+            </header>
+            <ul>
+              <li>
+                <span>
+                  La barra inferior aparece al mover el ratón o pausar el vídeo, y se queda visible mientras está
+                  pausado.
+                </span>
+              </li>
+              <li>
+                <span className="player-help-key">−1 min · −30 s · −10 s · +10 s · +30 s · +1 min</span>
+                <span>Botones de la barra para retroceder o avanzar; el tiempo exacto se ve a su derecha.</span>
+              </li>
+              <li>
+                <span className="player-help-key">Clic en el vídeo o Espacio</span>
+                <span>Pausar y reanudar. Con el vídeo pausado aparece un botón grande de reproducir en el centro.</span>
+              </li>
+              <li>
+                <span className="player-help-key">← / →</span>
+                <span>Retroceder o avanzar 10 segundos en películas (en directo, cambian de canal).</span>
+              </li>
+              <li>
+                <span className="player-help-key">Arrastra la barra de progreso</span>
+                <span>Salta a cualquier minuto de la película.</span>
+              </li>
+              <li>
+                <span className="player-help-key">F · M · C · Esc</span>
+                <span>Pantalla completa, silencio, subtítulos y cerrar el reproductor.</span>
+              </li>
+            </ul>
           </aside>
         )}
 
@@ -1369,21 +1452,29 @@ export function Player({
 
             {isVod ? (
               <div className="player-seek-group" role="group" aria-label="Saltar en el tiempo">
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(-60)} title="Retroceder 1 minuto">
+                  <Icon name="rewind" size={16} />
+                  <span>−1 min</span>
+                </button>
                 <button type="button" className="icon-btn player-seek" onClick={() => seekBy(-30)} title="Retroceder 30 segundos">
-                  <Icon name="rewind" size={17} />
-                  <span>30</span>
+                  <Icon name="rewind" size={14} />
+                  <span>−30 s</span>
                 </button>
                 <button type="button" className="icon-btn player-seek" onClick={() => seekBy(-10)} title="Retroceder 10 segundos">
-                  <Icon name="rewind" size={14} />
-                  <span>10</span>
+                  <Icon name="rewind" size={12} />
+                  <span>−10 s</span>
                 </button>
                 <button type="button" className="icon-btn player-seek" onClick={() => seekBy(10)} title="Avanzar 10 segundos">
-                  <Icon name="forward" size={14} />
-                  <span>10</span>
+                  <Icon name="forward" size={12} />
+                  <span>+10 s</span>
                 </button>
                 <button type="button" className="icon-btn player-seek" onClick={() => seekBy(30)} title="Avanzar 30 segundos">
-                  <Icon name="forward" size={17} />
-                  <span>30</span>
+                  <Icon name="forward" size={14} />
+                  <span>+30 s</span>
+                </button>
+                <button type="button" className="icon-btn player-seek" onClick={() => seekBy(60)} title="Avanzar 1 minuto">
+                  <Icon name="forward" size={16} />
+                  <span>+1 min</span>
                 </button>
               </div>
             ) : (

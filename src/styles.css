@@ -1316,6 +1316,37 @@ input {
   background: #000;
 }
 
+/* Botón grande de reanudar: deja claro que el vídeo está pausado. */
+.player-center-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  padding-left: 4px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(8, 10, 16, 0.62);
+  color: #fff;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(10px);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.player-center-play:hover {
+  background: rgba(229, 9, 20, 0.88);
+  transform: translate(-50%, -50%) scale(1.05);
+}
+
+.player-help-btn {
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .player-top {
   position: absolute;
   top: 0;
@@ -1436,6 +1467,40 @@ input {
   color: rgba(255, 255, 255, 0.75);
 }
 
+.player-help ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.player-help li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.player-help-key {
+  font-weight: 650;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .player-seek span {
+    display: none;
+  }
+
+  .player-controls .player-seek {
+    min-width: 34px;
+    padding: 0 4px;
+  }
+}
+
 .player-info-chips {
   display: flex;
   flex-wrap: wrap;
@@ -1548,7 +1613,7 @@ input {
 
 .player-timeline input {
   flex: 1;
-  height: 4px;
+  height: 6px;
   -webkit-appearance: none;
   appearance: none;
   border-radius: 999px;
@@ -1558,8 +1623,8 @@ input {
 
 .player-timeline input::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
@@ -1598,16 +1663,18 @@ input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
+  gap: 2px;
+  width: auto;
+  min-width: 42px;
+  padding: 0 6px;
 }
 
 .player-seek span {
-  margin-top: 7px;
-  margin-left: -3px;
-  font-size: 8.5px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-  opacity: 0.85;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: -0.1px;
+  opacity: 0.9;
+  white-space: nowrap;
 }
 
 .player-live {

@@ -17,10 +17,10 @@ Reproductor de escritorio para Windows con IPTV (M3U y Xtream Codes), EPG, pelí
 Entra en **[Releases](https://github.com/SquizanTech/NovaTV/releases)** y descarga el archivo más reciente:
 
 ```
-SquizanTV-Setup-0.5.4.exe
+SquizanTV-Setup-0.5.5.exe
 ```
 
-También puedes usar la versión portable `SquizanTV-Portable-0.5.4.exe` si no quieres instalar nada.
+También puedes usar la versión portable `SquizanTV-Portable-0.5.5.exe` si no quieres instalar nada.
 
 ### 2. Ejecuta el instalador
 
@@ -99,7 +99,7 @@ npm run dist
 
 Genera en `release/`:
 
-- `SquizanTV-Setup-0.5.4.exe`: instalador NSIS.
+- `SquizanTV-Setup-0.5.5.exe`: instalador NSIS.
 - `latest.yml` y el `.blockmap`: necesarios para las actualizaciones.
 - `win-unpacked/`: versión sin instalar para probar.
 
@@ -175,9 +175,14 @@ Las listas antiguas que guardaban todo el encabezado (`a.xml,b.xml`) como una so
 
 - `hls.js` para HLS y `mpegts.js` para MPEG-TS, con fallback automático.
 - MKV y MP4 se abren de forma nativa cuando el códec lo permite; si no, SquizanTV convierte en caliente con el ffmpeg integrado (vídeo a H.264 de 8 bits y audio a AAC) y lo sirve como MPEG-TS local.
-- Películas y episodios: barra de posición, tiempo transcurrido/total, saltos de ±10 y ±30 segundos y atajos de teclado.
+- La barra inferior aparece al mover el ratón o pulsar cualquier tecla, y se queda visible mientras el vídeo está pausado; con el vídeo en marcha se oculta a los 3 segundos.
+- Botones etiquetados **−1 min**, **−30 s**, **−10 s**, **+10 s**, **+30 s** y **+1 min**, con barra de progreso arrastrable y el tiempo exacto a la derecha.
+- Clic en el vídeo o `Espacio` para pausar y reanudar. Con el vídeo pausado aparece un botón grande de reproducir en el centro.
+- Botón **?** arriba a la derecha con la lista de botones, atajos y trucos del reproductor.
+- Películas y episodios: barra de posición, tiempo transcurrido/total, saltos de ±10, ±30 y ±60 segundos.
 - `←` / `→`: retroceder o avanzar 10 segundos en películas; cambiar de canal en directo.
 - `Espacio`: reproducir o pausar. `F`: pantalla completa. `M`: silencio. `C`: siguiente pista de subtítulos.
+- Mientras se convierte el vídeo o hay un búfer corto no se tapa la película con el cartel de «Conectando…»: solo se muestra al inicio y al saltar en el tiempo.
 - Subtítulos incluidos en el vídeo, archivos `.srt`/`.vtt`/`.ass` del torrent y archivos locales.
 - Selector de audio cuando el motor expone varias pistas.
 - Reproductor externo (VLC o mpv) para formatos que Chromium no decodifica.
